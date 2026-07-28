@@ -16,7 +16,7 @@ name: Zelda3 iOS Build
 
 on:
   push:
-    branches: [ios]
+    branches: [master]
   pull_request:
     branches: [ios-WIP]
   workflow_dispatch:
