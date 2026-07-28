@@ -16,7 +16,7 @@ name: Zelda3 iOS Build
 
 on:
   push:
-    branches: [master]
+    branches: [ios]
   pull_request:
     branches: [ios-WIP]
   workflow_dispatch:
@@ -52,8 +52,23 @@ jobs:
           xcodebuild -version
           echo "Active developer dir: $(xcode-select -p)"
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen (pinned version, built from source)
+        run: |
+          set -e
+          # Pinned to a specific tag rather than `brew install xcodegen`
+          # (latest): a newer XcodeGen can emit a .xcodeproj object-version
+          # format that Xcode 15.4 refuses to open ("future Xcode project
+          # file format"). Building from source via SPM avoids relying on
+          # brew's currently-indexed formula version or guessing at a
+          # release .zip's internal path layout.
+          XCODEGEN_VERSION="2.38.0"
+          git clone --branch "${XCODEGEN_VERSION}" --depth 1 \
+            https://github.com/yonaskolb/XcodeGen.git /tmp/xcodegen-src
+          cd /tmp/xcodegen-src
+          swift build -c release --product xcodegen
+          sudo cp .build/release/xcodegen /usr/local/bin/xcodegen
+          cd -
+          xcodegen --version
 
       - name: Generate .xcodeproj from project.yml
         working-directory: ${{ env.PROJECT_DIR }}
