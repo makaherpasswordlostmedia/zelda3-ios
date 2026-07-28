@@ -1,0 +1,151 @@
+name: Zelda3 iOS Build
+
+# What this validates: that Sources/App + Sources/CEngine compile cleanly
+# for both the iOS Simulator and a real device, and packages an *unsigned*
+# .ipa as a build artifact for inspection/manual install (e.g. resigning
+# yourself, or installing via a tool that accepts unsigned/dev-signed IPAs).
+#
+# What this does NOT do: bundle a ROM, sign the app for distribution, or
+# produce something installable via TestFlight/App Store. The resulting
+# app still shows the in-app ROM picker on first launch — nothing here
+# changes that. Code signing is disabled (CODE_SIGNING_ALLOWED=NO) purely
+# so CI doesn't need a certificate/provisioning profile to verify the
+# build compiles; you'll need your own Apple Developer signing to actually
+# install this on a physical device outside of Xcode's own
+# run-from-source flow.
+
+on:
+  push:
+    branches: [ios]
+  pull_request:
+    branches: [ios-WIP]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Zelda3 iOS App
+    runs-on: macos-14
+
+    # This workflow assumes the repo layout produced by the Zelda3 iOS
+    # scaffold: a Zelda3iOS/ folder containing project.yml, Sources/App,
+    # Sources/CEngine, and Resources/. Adjust PROJECT_DIR below if you've
+    # placed it elsewhere.
+    env:
+      PROJECT_DIR: Zelda3iOS
+      SCHEME: Zelda3iOS
+      PROJECT_NAME: Zelda3iOS
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -e
+          for v in 15.4 15.3 15.2; do
+            if [ -d "/Applications/Xcode_${v}.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_${v}.app/Contents/Developer"
+              echo "Selected Xcode ${v}"
+              break
+            fi
+          done
+          xcodebuild -version
+          echo "Active developer dir: $(xcode-select -p)"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate .xcodeproj from project.yml
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -e
+          xcodegen generate
+          ls -la
+
+      - name: Resolve Swift Package dependencies (SDL2)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -e
+          xcodebuild -resolvePackageDependencies \
+            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.SCHEME }}"
+
+      - name: Create build dir
+        run: mkdir -p build
+
+      - name: Show available simulators
+        run: xcrun simctl list devices available | grep -E "iPhone" | head -10
+
+      - name: Find simulator
+        id: sim
+        run: |
+          # Prefer a runtime that matches the active Xcode's iOS SDK, not just any listed device.
+          NAME=$(xcrun simctl list devices available | grep -E "iPhone [0-9]" | grep -v "unavailable" | head -1 | sed -E 's/^ *([^(]+) \(.*/\1/' | xargs)
+          if [ -z "$NAME" ]; then
+            echo "No simulator found, listing all:"
+            xcrun simctl list devices
+            exit 1
+          fi
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "Found simulator: $NAME"
+
+      - name: Build for simulator (Debug)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          xcodebuild \
+            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.SCHEME }}" \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -configuration Debug \
+            -derivedDataPath ../build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            clean build \
+          2>&1 | tee ../build/sim.log
+          grep -q "BUILD SUCCEEDED" ../build/sim.log && echo "✅ Build OK" || { echo "❌ Build FAILED"; grep "error:" ../build/sim.log | head -30; exit 1; }
+
+      - name: Build for device (Release, unsigned)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          xcodebuild \
+            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.SCHEME }}" \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath ../build/DerivedDataDevice \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            clean build \
+          2>&1 | tee ../build/device.log
+          grep -q "BUILD SUCCEEDED" ../build/device.log && echo "✅ Device build OK" || { echo "❌ Device build FAILED"; grep "error:" ../build/device.log | head -30; exit 1; }
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          APP_PATH=$(find build/DerivedDataDevice/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app found in device build products"
+            find build/DerivedDataDevice/Build/Products -maxdepth 3
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          cd build/ipa
+          zip -r -q ../Zelda3iOS-unsigned.ipa Payload
+          cd ../..
+          echo "✅ Packaged $(ls -la build/Zelda3iOS-unsigned.ipa)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Zelda3iOS-iOS
+          path: |
+            build/sim.log
+            build/device.log
+            build/Zelda3iOS-unsigned.ipa
+            build/DerivedData/Build/Products/
+          retention-days: 14
