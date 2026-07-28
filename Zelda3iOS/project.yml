@@ -2,7 +2,7 @@ name: Zelda3iOS
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
-    iOS: "13.0"
+    iOS: "14.7"
   createIntermediateGroups: true
   # XcodeGen picks the newest project file format it knows how to emit,
   # regardless of which Xcode is active via xcode-select. That format can
@@ -21,7 +21,7 @@ targets:
   Zelda3iOS:
     type: application
     platform: iOS
-    deploymentTarget: "13.0"
+    deploymentTarget: "14.7"
     sources:
       - path: Sources/App
       - path: Sources/CEngine

@@ -10,7 +10,7 @@ import PackageDescription
 // an Xcode App target can. See README.md "Building" section.
 let package = Package(
     name: "Zelda3iOS",
-    platforms: [.iOS(.v13)],
+    platforms: [.iOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/ctreffs/SwiftSDL2.git", from: "1.4.0")
     ],
