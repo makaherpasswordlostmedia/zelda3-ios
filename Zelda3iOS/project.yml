@@ -4,6 +4,13 @@ options:
   deploymentTarget:
     iOS: "13.0"
   createIntermediateGroups: true
+  # XcodeGen picks the newest project file format it knows how to emit,
+  # regardless of which Xcode is active via xcode-select. That format can
+  # be newer than what an older pinned Xcode (e.g. 15.4 in CI) can open,
+  # causing "future Xcode project file format" errors. Pin explicitly to
+  # match the Xcode version used in CI (see .github/workflows/ios_build.yml).
+  # Xcode 15.x uses project object version 60 (PBXProj format 1).
+  xcodeVersion: "15.4"
 
 packages:
   SwiftSDL2:
