@@ -34,12 +34,14 @@ final class RomPickerViewController: UIViewController {
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
 
-        var config = UIButton.Configuration.filled()
-        config.title = "Choose ROM File…"
-        config.image = UIImage(systemName: "folder")
-        config.imagePadding = 8
-        config.cornerStyle = .medium
-        pickButton.configuration = config
+        pickButton.setTitle("Choose ROM File…", for: .normal)
+        pickButton.setImage(UIImage(systemName: "folder"), for: .normal)
+        pickButton.tintColor = .white
+        pickButton.setTitleColor(.white, for: .normal)
+        pickButton.backgroundColor = .systemBlue
+        pickButton.layer.cornerRadius = 10
+        pickButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)
+        pickButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: -8, bottom: 0, right: 8)
         pickButton.addTarget(self, action: #selector(pickButtonTapped), for: .touchUpInside)
 
         statusLabel.font = .systemFont(ofSize: 13)
