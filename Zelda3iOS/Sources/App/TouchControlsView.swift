@@ -130,14 +130,14 @@ final class TouchControlsView: UIView {
         addSubview(dPad)
         dPad.translatesAutoresizingMaskIntoConstraints = false
 
-        let a = GameButton(title: "A", iosButton: .A)
-        let b = GameButton(title: "B", iosButton: .B)
-        let x = GameButton(title: "X", iosButton: .X)
-        let y = GameButton(title: "Y", iosButton: .Y)
-        let l = GameButton(title: "L", iosButton: .L)
-        let r = GameButton(title: "R", iosButton: .R)
-        let start = GameButton(title: "Start", iosButton: .Start)
-        let select = GameButton(title: "Select", iosButton: .Select)
+        let a = GameButton(title: "A", iosButton: .a)
+        let b = GameButton(title: "B", iosButton: .b)
+        let x = GameButton(title: "X", iosButton: .x)
+        let y = GameButton(title: "Y", iosButton: .y)
+        let l = GameButton(title: "L", iosButton: .l)
+        let r = GameButton(title: "R", iosButton: .r)
+        let start = GameButton(title: "Start", iosButton: .start)
+        let select = GameButton(title: "Select", iosButton: .select)
 
         buttons = [a, b, x, y, l, r, start, select]
         for btn in buttons {
