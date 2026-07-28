@@ -17,6 +17,9 @@ let package = Package(
     targets: [
         .target(
             name: "CEngine",
+            dependencies: [
+                .product(name: "SDL", package: "SwiftSDL2")
+            ],
             path: "Sources/CEngine",
             exclude: [
                 // Desktop-only asset extraction tooling (Python), not part
