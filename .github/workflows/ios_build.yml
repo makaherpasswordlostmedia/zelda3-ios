@@ -74,6 +74,7 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -e
+          rm -rf "${{ env.PROJECT_NAME }}.xcodeproj"
           xcodegen generate
           ls -la
 
