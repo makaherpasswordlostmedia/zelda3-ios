@@ -38,20 +38,28 @@ int ios_bridge_run_game(int argc, char **argv);
 // here (rather than sharing config.h's internal kKeys_* enum) so the
 // Swift-facing surface stays small and doesn't need every internal engine
 // header on its include path.
-typedef enum {
-  kIosBtn_Up = 0,
-  kIosBtn_Down = 1,
-  kIosBtn_Left = 2,
-  kIosBtn_Right = 3,
-  kIosBtn_Select = 4,
-  kIosBtn_Start = 5,
-  kIosBtn_B = 6,
-  kIosBtn_A = 7,
-  kIosBtn_Y = 8,
-  kIosBtn_X = 9,
-  kIosBtn_L = 10,
-  kIosBtn_R = 11,
-} IosButton;
+// Declared as NS_ENUM (rather than a plain C enum) so that Swift imports
+// it as a proper Swift enum with automatic Hashable/Equatable conformance,
+// which TouchControlsView.swift relies on (e.g. `Set<IosButton>`). Each
+// case has an explicit NS_SWIFT_NAME so the imported Swift case name is
+// exactly what TouchControlsView.swift expects (.up, .down, .left, .right,
+// .select, .start, .B, .A, .Y, .X, .L, .R) rather than whatever Clang's
+// automatic IosButton-prefix-stripping heuristic would produce.
+#import <Foundation/Foundation.h>
+typedef NS_ENUM(NSInteger, IosButton) {
+  kIosBtn_Up NS_SWIFT_NAME(up) = 0,
+  kIosBtn_Down NS_SWIFT_NAME(down) = 1,
+  kIosBtn_Left NS_SWIFT_NAME(left) = 2,
+  kIosBtn_Right NS_SWIFT_NAME(right) = 3,
+  kIosBtn_Select NS_SWIFT_NAME(select) = 4,
+  kIosBtn_Start NS_SWIFT_NAME(start) = 5,
+  kIosBtn_B NS_SWIFT_NAME(B) = 6,
+  kIosBtn_A NS_SWIFT_NAME(A) = 7,
+  kIosBtn_Y NS_SWIFT_NAME(Y) = 8,
+  kIosBtn_X NS_SWIFT_NAME(X) = 9,
+  kIosBtn_L NS_SWIFT_NAME(L) = 10,
+  kIosBtn_R NS_SWIFT_NAME(R) = 11,
+};
 
 // Called from the on-screen touch controls overlay. `pressed` is 1 on
 // touch-down, 0 on touch-up. Thread-safe to call from the UI thread even
