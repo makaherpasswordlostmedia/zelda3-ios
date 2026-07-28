@@ -26,6 +26,7 @@ let package = Package(
                 // of the compiled engine.
             ],
             cSettings: [
+                .headerSearchPath("."),
                 .headerSearchPath("src"),
                 .headerSearchPath("snes"),
                 .headerSearchPath("third_party"),

@@ -48,6 +48,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Sources/App/Zelda3iOS-Bridging-Header.h
         SWIFT_VERSION: 5.0
         HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Sources/CEngine"
           - "$(SRCROOT)/Sources/CEngine/src"
           - "$(SRCROOT)/Sources/CEngine/snes"
           - "$(SRCROOT)/Sources/CEngine/third_party"
