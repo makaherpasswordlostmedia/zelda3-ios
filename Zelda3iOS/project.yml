@@ -1,0 +1,63 @@
+name: Zelda3iOS
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "13.0"
+  createIntermediateGroups: true
+
+packages:
+  SwiftSDL2:
+    url: https://github.com/ctreffs/SwiftSDL2.git
+    from: 1.4.0
+
+targets:
+  Zelda3iOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Sources/App
+      - path: Sources/CEngine
+        type: group
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - package: SwiftSDL2
+        product: SDL2
+    info:
+      path: Resources/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIApplicationSupportsIndirectInputEvents: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.zelda3ios
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/App/Zelda3iOS-Bridging-Header.h
+        SWIFT_VERSION: 5.0
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Sources/CEngine/src"
+          - "$(SRCROOT)/Sources/CEngine/snes"
+          - "$(SRCROOT)/Sources/CEngine/third_party"
+          - "$(SRCROOT)/Sources/CEngine/third_party/stb"
+          - "$(SRCROOT)/Sources/CEngine/third_party/gl_core"
+          - "$(SRCROOT)/Sources/CEngine/third_party/opus-1.3.1-stripped"
+          - "$(SRCROOT)/Sources/CEngine/src/platform/ios"
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - "SDL_MAIN_HANDLED=1"
+          - "__IPHONEOS__=1"
+        OTHER_CFLAGS:
+          - "-Wno-everything"
+        ENABLE_BITCODE: false
+        TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        Debug:
+          GCC_OPTIMIZATION_LEVEL: 0
+        Release:
+          GCC_OPTIMIZATION_LEVEL: 3
