@@ -32,6 +32,7 @@ let package = Package(
                 .headerSearchPath("third_party"),
                 .headerSearchPath("src/platform/ios"),
                 .define("__IPHONEOS__"),
+                .define("VAR_ARRAYS"),
             ]
         )
     ]
