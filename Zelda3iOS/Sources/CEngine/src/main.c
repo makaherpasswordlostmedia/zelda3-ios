@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <SDL.h>
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+#include <SDL_main.h>
+#endif
 #ifdef _WIN32
 #include "platform/win32/volume_control.h"
 #include <direct.h>
@@ -298,6 +301,22 @@ void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
 // SDL_main, not main, or the link fails with "_SDL_main" unresolved.
 #undef main
 int SDL_main(int argc, char** argv) {
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  // On iOS, SDL2's video subsystem init (SDL_Init(SDL_INIT_VIDEO), which
+  // includes SDL_INIT_EVENTS) checks that the app went through SDL's normal
+  // bootstrap (SDL_main.h's `#define main SDL_main` + SDL_UIKitRunApp, which
+  // itself calls SDL_SetMainReady() before invoking UIApplicationMain).
+  // This app instead has its own AppDelegate (see Sources/App/AppDelegate.swift)
+  // and calls SDL_main directly from ios_bridge.m, bypassing that bootstrap
+  // entirely — SDL_MAIN_HANDLED (set project-wide) covers the `#define
+  // main` part, but iOS's video init still needs an explicit
+  // SDL_SetMainReady() to know this bypass is deliberate. Without it,
+  // SDL_Init(SDL_INIT_VIDEO) fails immediately with "Application didn't
+  // initialize properly, did you include SDL_main.h in the file containing
+  // your main() function?" even though this file does include <SDL.h> —
+  // that message is a generic fallback, not literally about the #include.
+  SDL_SetMainReady();
+#endif
   argc--, argv++;
   const char *config_file = NULL;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
