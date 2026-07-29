@@ -349,6 +349,9 @@ int SDL_main(int argc, char** argv) {
   // set up SDL
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
     printf("Failed to init SDL: %s\n", SDL_GetError());
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+    { char buf[256]; snprintf(buf, sizeof(buf), "DIAG: SDL_Init failed: %s", SDL_GetError()); ios_bridge_notify_fatal_error(buf); }
+#endif
     return 1;
   }
 
@@ -367,6 +370,9 @@ int SDL_main(int argc, char** argv) {
   SDL_Window* window = SDL_CreateWindow(kWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, g_win_flags);
   if(window == NULL) {
     printf("Failed to create window: %s\n", SDL_GetError());
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+    { char buf[256]; snprintf(buf, sizeof(buf), "DIAG: SDL_CreateWindow failed: %s", SDL_GetError()); ios_bridge_notify_fatal_error(buf); }
+#endif
     return 1;
   }
   g_window = window;
@@ -378,8 +384,12 @@ int SDL_main(int argc, char** argv) {
   ios_bridge_notify_window_created(window);
 #endif
 
-  if (!g_renderer_funcs.Initialize(window))
+  if (!g_renderer_funcs.Initialize(window)) {
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+    ios_bridge_notify_fatal_error("DIAG: g_renderer_funcs.Initialize(window) failed");
+#endif
     return 1;
+  }
 
   SDL_AudioDeviceID device = 0;
   SDL_AudioSpec want = { 0 }, have;
@@ -395,6 +405,9 @@ int SDL_main(int argc, char** argv) {
     device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (device == 0) {
       printf("Failed to open audio device: %s\n", SDL_GetError());
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+      { char buf[256]; snprintf(buf, sizeof(buf), "DIAG: SDL_OpenAudioDevice failed: %s", SDL_GetError()); ios_bridge_notify_fatal_error(buf); }
+#endif
       return 1;
     }
     g_audio_channels = have.channels;
