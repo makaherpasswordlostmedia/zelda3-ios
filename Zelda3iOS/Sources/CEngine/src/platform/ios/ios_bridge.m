@@ -6,8 +6,53 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <SDL.h>
-#include <SDL_syswm.h>
 #include "ios_bridge.h"
+
+// SwiftSDL2 ships SDL2 as a precompiled XCFramework and only exposes the
+// core cross-platform headers — SDL_syswm.h (and other platform-specific
+// headers) are not part of its public module, so `#include <SDL_syswm.h>`
+// can never resolve against this dependency. SDL_GetWindowWMInfo() is still
+// exported by the compiled library and its ABI is stable, so we declare the
+// minimal, layout-compatible subset of SDL_syswm.h we actually need
+// (the UIKit case) locally instead of relying on the missing header.
+// NOTE: SDL_SYSWM_TYPE is an enum whose numeric values are fixed by SDL2's
+// public ABI. Re-declaring the full enum (in original member order) is the
+// safe way to get a matching value for SDL_SYSWM_UIKIT without needing the
+// header, since C enum constants must match across translation units by
+// value, not just by name.
+typedef enum {
+  SDL_SYSWM_UNKNOWN,
+  SDL_SYSWM_WINDOWS,
+  SDL_SYSWM_X11,
+  SDL_SYSWM_DIRECTFB,
+  SDL_SYSWM_COCOA,
+  SDL_SYSWM_UIKIT,
+  SDL_SYSWM_WAYLAND,
+  SDL_SYSWM_MIR,
+  SDL_SYSWM_WINRT,
+  SDL_SYSWM_ANDROID,
+  SDL_SYSWM_VIVANTE,
+  SDL_SYSWM_OS2,
+  SDL_SYSWM_HAIKU,
+  SDL_SYSWM_KMSDRM,
+  SDL_SYSWM_RISCOS
+} SDL_SYSWM_TYPE;
+
+struct SDL_SysWMinfo {
+  SDL_version version;
+  SDL_SYSWM_TYPE subsystem;
+  union {
+    struct {
+      UIWindow *window;
+    } uikit;
+    // Matches upstream SDL_syswm.h's "can't have an empty union" padding
+    // member for platforms/subsystems we don't handle here.
+    Uint8 dummy[64];
+  } info;
+};
+typedef struct SDL_SysWMinfo SDL_SysWMinfo;
+
+extern SDL_bool SDL_GetWindowWMInfo(SDL_Window *window, SDL_SysWMinfo *info);
 
 // Declared by SDL2 (SDL_main.h) — the engine's real entry point in main.c
 // is compiled as SDL's "main", SDL then calls back into this exported
