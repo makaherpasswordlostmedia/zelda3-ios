@@ -78,22 +78,16 @@ void NORETURN Die(const char *error) {
 #endif
   fprintf(stderr, "Error: %s\n", error);
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
-  // Report the error to the Swift layer, which shows it in an alert, then
-  // park this thread forever instead of calling exit(1). Die() runs on the
-  // engine's background thread here (see GameViewController.swift's
-  // launchEngine()), and exit() from a non-main thread on iOS doesn't
-  // reliably tear down a UIKit app — it can leave the process running with
-  // the UI still showing "Loading…" and no visible error, which is exactly
-  // the "infinite loading" bug this replaces. Blocking this thread instead
-  // guarantees the main thread/UIKit stay alive to actually show the alert;
-  // the user can then force-quit normally.
+  // Report the error to the Swift layer, which shows it in an alert.
+  // GameViewController currently calls ios_bridge_run_game (and therefore
+  // this function, when it's reached) synchronously on the main thread —
+  // see the diagnostic comment in GameViewController.swift's launchEngine()
+  // — so exit() here runs on the main thread too and behaves predictably;
+  // we don't need the background-thread workaround from before. Still
+  // notify first so the alert has a chance to be scheduled before exit().
   ios_bridge_notify_fatal_error(error);
-  for (;;) {
-    SDL_Delay(1000);
-  }
-#else
-  exit(1);
 #endif
+  exit(1);
 }
 
 void ChangeWindowScale(int scale_step) {
