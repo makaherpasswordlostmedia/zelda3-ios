@@ -122,35 +122,20 @@ final class GameViewController: UIViewController {
     // MARK: - Engine launch
 
     private func launchEngine() {
-        // DIAGNOSTIC (temporary): print progress markers directly onto
-        // statusLabel, visible without a cable/Xcode console, so we can see
-        // exactly how far execution gets before it appears to hang.
-        statusLabel.text = "Loading… [1: launchEngine called]"
-
-        // DIAGNOSTIC: SDL2's iOS video backend creates/owns a UIWindow via
-        // UIKit APIs inside SDL_Init/SDL_CreateWindow, which (like all UIKit
-        // API) must run on the main thread. Running SDL_main on a
-        // background queue — as this used to do — can leave SDL stuck
-        // indefinitely inside SDL_Init/SDL_CreateWindow with no error and
-        // no crash, which looks exactly like an infinite "Loading…" screen.
-        // This synchronous, main-thread call is a deliberate but temporary
-        // fix to confirm that diagnosis: the engine's `while(running)` game
-        // loop (src/main.c) will block the main thread/UIKit run loop for
-        // as long as the game runs, which is not viable long-term (no touch
-        // events, no view updates, watchdog-terminated by the OS) — but if
-        // this makes the game actually start, it confirms the thread was
-        // the problem, and the real fix is restructuring main.c's loop
-        // around a CADisplayLink/timer-driven single-frame-step function
-        // instead of calling SDL_main's blocking loop directly.
-        let argv0 = strdup("zelda3")
-        var argvArray: [UnsafeMutablePointer<CChar>?] = [argv0, nil]
-        statusLabel.text = "Loading… [2: about to call ios_bridge_run_game]"
-        _ = argvArray.withUnsafeMutableBufferPointer { buffer -> Int32 in
-            ios_bridge_run_game(1, buffer.baseAddress)
+        // The engine's asset-extraction pipeline (Python, in assets/) is a
+        // build-time / desktop tool, not something we run on-device today.
+        // See README_BUILD.md "Step 4 — asset extraction gap": bundle a
+        // precomputed zelda3_assets.bps in Resources/ and copy it into
+        // Documents before this call; the engine's existing LoadAssets()
+        // path in main.c will patch the user's own ROM into
+        // zelda3_assets.dat on first run.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let argv0 = strdup("zelda3")
+            var argvArray: [UnsafeMutablePointer<CChar>?] = [argv0, nil]
+            _ = argvArray.withUnsafeMutableBufferPointer { buffer -> Int32 in
+                ios_bridge_run_game(1, buffer.baseAddress)
+            }
+            free(argv0)
         }
-        free(argv0)
-        // If we ever get here, ios_bridge_run_game (SDL_main) returned —
-        // meaning the game loop actually exited rather than hanging.
-        statusLabel.text = "Loading… [3: ios_bridge_run_game returned!]"
     }
 }
