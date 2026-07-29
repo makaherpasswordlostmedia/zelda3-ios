@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -144,18 +145,35 @@ void ios_bridge_notify_window_created(struct SDL_Window *window) {
   // SDL_CreateWindow() returns in main.c. Extract the real UIWindow via
   // SDL's syswm API, then hop to the main thread before touching UIKit or
   // invoking the (Swift) callback.
-  SDL_SysWMinfo info;
-  SDL_VERSION(&info.version);
-  if (!SDL_GetWindowWMInfo((SDL_Window *)window, &info)) {
-    NSLog(@"ios_bridge: SDL_GetWindowWMInfo failed: %s", SDL_GetError());
+  // SDL_SysWMinfo contains a union whose UIKit variant holds a
+  // strong-qualified `UIWindow *`. ARC refuses to stack-allocate (or
+  // default-initialize/destruct) any aggregate with a non-trivial union
+  // member, so `SDL_SysWMinfo info;` on the stack fails to compile under
+  // ARC. Heap-allocate it instead with plain calloc/free, which sidesteps
+  // ARC's automatic retain/release entirely (the union is never
+  // synthesized-managed on the heap the way it would be for a stack/ivar
+  // declaration).
+  SDL_SysWMinfo *infoPtr = (SDL_SysWMinfo *)calloc(1, sizeof(SDL_SysWMinfo));
+  if (!infoPtr) {
+    NSLog(@"ios_bridge: failed to allocate SDL_SysWMinfo");
     return;
   }
-  if (info.subsystem != SDL_SYSWM_UIKIT) {
-    NSLog(@"ios_bridge: unexpected window subsystem %d (expected UIKit)", info.subsystem);
+  SDL_VERSION(&infoPtr->version);
+  if (!SDL_GetWindowWMInfo((SDL_Window *)window, infoPtr)) {
+    NSLog(@"ios_bridge: SDL_GetWindowWMInfo failed: %s", SDL_GetError());
+    free(infoPtr);
+    return;
+  }
+  if (infoPtr->subsystem != SDL_SYSWM_UIKIT) {
+    NSLog(@"ios_bridge: unexpected window subsystem %d (expected UIKit)", infoPtr->subsystem);
+    free(infoPtr);
     return;
   }
 
-  UIWindow *uiWindow = info.info.uikit.window;
+  // Copy out the raw pointer value before freeing; __unsafe_unretained
+  // avoids ARC trying to manage this local the same way it would the union.
+  __unsafe_unretained UIWindow *uiWindow = infoPtr->info.uikit.window;
+  free(infoPtr);
   if (!uiWindow)
     return;
 
