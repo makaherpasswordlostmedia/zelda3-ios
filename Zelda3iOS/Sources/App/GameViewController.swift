@@ -34,7 +34,38 @@ final class GameViewController: UIViewController {
         guard !didLaunch else { return }
         didLaunch = true
         registerWindowReadyCallback()
+        registerFatalErrorCallback()
         launchEngine()
+    }
+
+    // MARK: - Fatal error reporting
+
+    /// Without this, a fatal error inside the engine (e.g. a missing
+    /// zelda3_assets.bps, or a ROM that doesn't match the expected version)
+    /// calls Die() -> exit(1) on the background thread launchEngine() runs
+    /// on, which can leave the app looking stuck on "Loading…" forever
+    /// instead of showing anything useful. This surfaces the real message.
+    private func registerFatalErrorCallback() {
+        let unmanagedSelf = Unmanaged.passRetained(self).toOpaque()
+        ios_bridge_set_fatal_error_callback({ messagePtr, context in
+            // Called on the main thread (see ios_bridge.m) — safe to touch
+            // UIKit directly here.
+            guard let context else { return }
+            let vc = Unmanaged<GameViewController>.fromOpaque(context).takeUnretainedValue()
+            let message = messagePtr.map { String(cString: $0) } ?? "Unknown error"
+            vc.showFatalError(message)
+        }, unmanagedSelf)
+    }
+
+    private func showFatalError(_ message: String) {
+        statusLabel.text = "Error"
+        let alert = UIAlertController(
+            title: "Couldn't start the game",
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 
     // MARK: - SDL window hookup
