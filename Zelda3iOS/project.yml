@@ -38,6 +38,11 @@ targets:
           # this only affects perf on ARM, not correctness.
           - "third_party/opus-1.3.1-stripped/arm/celt_mdct_ne10.c"
           - "third_party/opus-1.3.1-stripped/arm/celt_fft_ne10.c"
+          # This file #includes opus_decoder.c, opus.c, celt.c, cwrs.c, etc.
+          # as a single amalgamated translation unit. Those same .c files are
+          # also compiled individually elsewhere in this source tree, so
+          # including this file too causes duplicate-symbol link errors.
+          - "third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c"
     dependencies:
       - package: SwiftSDL2
         product: SDL
@@ -71,7 +76,7 @@ targets:
           - "SDL_MAIN_HANDLED=1"
           - "__IPHONEOS__=1"
           - "HAVE_CONFIG_H=1"
-          - "VAR_ARRAYS=1"
+          - "USE_ALLOCA=1"
         OTHER_CFLAGS:
           - "-Wno-everything"
         ENABLE_BITCODE: false
