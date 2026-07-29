@@ -6,6 +6,7 @@
 #include <SDL.h>
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
 #include <SDL_main.h>
+#include <dispatch/dispatch.h>
 #endif
 #ifdef _WIN32
 #include "platform/win32/volume_control.h"
@@ -366,7 +367,29 @@ int SDL_main(int argc, char** argv) {
     g_config.audio_samples = kDefaultSamples;
 
   // set up SDL
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  // SDL2's iOS video backend touches UIKit (creates/owns UIWindow, etc.)
+  // during SDL_Init(SDL_INIT_VIDEO) and SDL_CreateWindow() below. UIKit
+  // enforces at runtime that such calls happen on the main thread — this
+  // confirmed crash showed NSInternalInconsistencyException: "threading
+  // violation: expected the main thread" when SDL_main (and therefore
+  // SDL_Init) ran on the background thread GameViewController.swift
+  // dispatches to. We can't move the whole game loop to the main thread
+  // (the `while(running)` loop below would block UIKit's run loop for as
+  // long as the game runs), so instead we hop just the SDL_Init call
+  // itself onto the main thread synchronously, then continue running
+  // everything else (including SDL_CreateWindow, which — per SDL2's
+  // source — is safe to call off the main thread as long as SDL_Init
+  // already completed its one-time UIKit setup) on this background
+  // thread as before.
+  __block int sdl_init_result = -1;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    sdl_init_result = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER);
+  });
+  if (sdl_init_result != 0) {
+#else
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+#endif
     printf("Failed to init SDL: %s\n", SDL_GetError());
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
     { char buf[256]; snprintf(buf, sizeof(buf), "DIAG: SDL_Init failed: %s", SDL_GetError()); ios_bridge_notify_fatal_error(buf); }
@@ -386,7 +409,16 @@ int SDL_main(int argc, char** argv) {
     g_renderer_funcs = kSdlRendererFuncs;
   }
 
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  // Same reasoning as the SDL_Init hop above: SDL_CreateWindow's iOS
+  // backend creates a real UIWindow, which must happen on the main thread.
+  __block SDL_Window* window = NULL;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    window = SDL_CreateWindow(kWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, g_win_flags);
+  });
+#else
   SDL_Window* window = SDL_CreateWindow(kWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, g_win_flags);
+#endif
   if(window == NULL) {
     printf("Failed to create window: %s\n", SDL_GetError());
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
