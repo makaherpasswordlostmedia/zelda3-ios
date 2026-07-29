@@ -236,7 +236,18 @@ void ios_bridge_notify_window_created(struct SDL_Window *window) {
     return;
   }
 
-  dispatch_async(dispatch_get_main_queue(), ^{
+  // dispatch_sync (not async): the caller (SdlRenderer_Init in main.c,
+  // right after this returns) goes on to call SDL_CreateRenderer, which
+  // also touches this same UIWindow's view hierarchy on the main thread.
+  // With dispatch_async, that could run concurrently with
+  // attachControlsOverlay's NSLayoutConstraint.activate below, and both
+  // touching the same Auto Layout engine from different threads at once
+  // produced "Modifications to the layout engine must not be performed
+  // from a background thread after it has been accessed from the main
+  // thread." Waiting here for the overlay to finish attaching keeps every
+  // touch of this window's view hierarchy serialized through the main
+  // thread, one at a time.
+  dispatch_sync(dispatch_get_main_queue(), ^{
     callback(retainedWindowRef, context);
   });
 }
