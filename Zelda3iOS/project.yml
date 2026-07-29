@@ -63,6 +63,7 @@ targets:
           - "SDL_MAIN_HANDLED=1"
           - "__IPHONEOS__=1"
           - "VAR_ARRAYS=1"
+          - "HAVE_CONFIG_H=1"
         OTHER_CFLAGS:
           - "-Wno-everything"
         ENABLE_BITCODE: false

@@ -33,6 +33,7 @@ let package = Package(
                 .headerSearchPath("src/platform/ios"),
                 .define("__IPHONEOS__"),
                 .define("VAR_ARRAYS"),
+                .define("HAVE_CONFIG_H"),
             ]
         )
     ]
