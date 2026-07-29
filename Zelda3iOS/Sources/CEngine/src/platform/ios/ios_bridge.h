@@ -110,6 +110,23 @@ void ios_bridge_notify_window_created(struct SDL_Window *window);
 typedef void (*IosWindowReadyCallback)(void *uiWindowRef, void *context);
 void ios_bridge_set_window_ready_callback(IosWindowReadyCallback callback, void *context);
 
+// Registers a callback invoked when the engine hits a fatal error via
+// Die() (src/main.c) — e.g. a missing/invalid ROM or assets file. Without
+// this, Die() just calls exit(1), which on iOS can leave the app appearing
+// to hang (stuck on a "Loading…" screen) rather than visibly crashing,
+// since exit() from a background thread doesn't reliably tear down the
+// process the way it does on desktop platforms. Swift registers this once
+// at startup so it can show the actual error message to the user instead.
+// `message` is only valid for the duration of the callback.
+typedef void (*IosFatalErrorCallback)(const char *message, void *context);
+void ios_bridge_set_fatal_error_callback(IosFatalErrorCallback callback, void *context);
+
+// Called by Die() (src/main.c) right before it would otherwise call
+// exit(1). Forwards to the registered fatal-error callback, if any, on the
+// main thread. Does not itself call exit() — src/main.c still does that
+// immediately after, on whichever thread called Die().
+void ios_bridge_notify_fatal_error(const char *message);
+
 #ifdef __cplusplus
 }
 #endif

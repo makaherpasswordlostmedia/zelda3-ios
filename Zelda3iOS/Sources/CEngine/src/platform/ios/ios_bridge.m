@@ -140,6 +140,32 @@ void ios_bridge_set_window_ready_callback(IosWindowReadyCallback callback, void 
   g_window_ready_context = context;
 }
 
+static IosFatalErrorCallback g_fatal_error_callback = NULL;
+static void *g_fatal_error_context = NULL;
+
+void ios_bridge_set_fatal_error_callback(IosFatalErrorCallback callback, void *context) {
+  g_fatal_error_callback = callback;
+  g_fatal_error_context = context;
+}
+
+void ios_bridge_notify_fatal_error(const char *message) {
+  // Called from Die() (src/main.c), which may be running on the engine's
+  // background thread — hop to main before touching UIKit / invoking the
+  // (Swift) callback, same pattern as ios_bridge_notify_window_created
+  // below. We strdup the message because Die()'s caller may pass a literal
+  // that's fine to reference immediately, but to be safe across the async
+  // hop we take our own copy and free it after the callback returns.
+  IosFatalErrorCallback callback = g_fatal_error_callback;
+  void *context = g_fatal_error_context;
+  if (!callback)
+    return;
+  char *messageCopy = message ? strdup(message) : strdup("(unknown error)");
+  dispatch_async(dispatch_get_main_queue(), ^{
+    callback(messageCopy, context);
+    free(messageCopy);
+  });
+}
+
 void ios_bridge_notify_window_created(struct SDL_Window *window) {
   // Called from the engine's background thread, right after
   // SDL_CreateWindow() returns in main.c. Extract the real UIWindow via
