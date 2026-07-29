@@ -130,12 +130,23 @@ final class GameViewController: UIViewController {
         // path in main.c will patch the user's own ROM into
         // zelda3_assets.dat on first run.
         DispatchQueue.global(qos: .userInitiated).async {
+            // SDL_main (src/main.c) does `argc--, argv++` right at the
+            // start — the standard "skip argv[0] (program name)" idiom. It
+            // expects argv[0] to be the program name and any real
+            // arguments to start at argv[1]. Passing argc=1 with only one
+            // element made argc become 0 after that decrement, which then
+            // failed main.c's `if (argc >= 1) LoadRom(argv[0])` guard — the
+            // ROM was silently never loaded. Pass a dummy second argument
+            // so argc=2, and argv+1 still points at a valid (empty) string
+            // after the shift.
             let argv0 = strdup("zelda3")
-            var argvArray: [UnsafeMutablePointer<CChar>?] = [argv0, nil]
+            let argv1 = strdup("")
+            var argvArray: [UnsafeMutablePointer<CChar>?] = [argv0, argv1, nil]
             _ = argvArray.withUnsafeMutableBufferPointer { buffer -> Int32 in
-                ios_bridge_run_game(1, buffer.baseAddress)
+                ios_bridge_run_game(2, buffer.baseAddress)
             }
             free(argv0)
+            free(argv1)
         }
     }
 }
