@@ -125,7 +125,25 @@ void ios_bridge_set_fatal_error_callback(IosFatalErrorCallback callback, void *c
 // exit(1). Forwards to the registered fatal-error callback, if any, on the
 // main thread. Does not itself call exit() — src/main.c still does that
 // immediately after, on whichever thread called Die().
+//
+// NOTE: this dispatches to the main thread *asynchronously* (fire-and-
+// forget) and returns right away. Die() runs on the engine's background
+// thread, so calling exit(1) immediately after this can — and did in
+// practice — race the queued main-thread block and kill the process before
+// the alert is ever shown, producing a silent, log-less crash. Prefer
+// ios_bridge_notify_fatal_error_and_wait() from Die() instead; this
+// fire-and-forget variant is kept for any other callers that don't
+// immediately terminate the process afterwards.
 void ios_bridge_notify_fatal_error(const char *message);
+
+// Same as ios_bridge_notify_fatal_error(), but blocks the calling thread
+// until the registered callback has finished running on the main thread
+// (i.e. the alert has actually been presented), or until `timeout_seconds`
+// elapses, whichever comes first. Safe to call from any thread, including
+// the main thread itself (in which case the callback runs synchronously
+// and this returns immediately after). This is what Die() uses so that the
+// exit(1) which follows it can never race the UI update.
+void ios_bridge_notify_fatal_error_and_wait(const char *message, double timeout_seconds);
 
 #ifdef __cplusplus
 }

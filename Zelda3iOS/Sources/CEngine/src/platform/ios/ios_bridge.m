@@ -183,6 +183,44 @@ void ios_bridge_notify_fatal_error(const char *message) {
   });
 }
 
+void ios_bridge_notify_fatal_error_and_wait(const char *message, double timeout_seconds) {
+  // Same idea as ios_bridge_notify_fatal_error(), but the caller (Die(), in
+  // src/main.c) needs the main-thread callback to have actually run before
+  // it calls exit(1) — otherwise exit() can race and win against the
+  // dispatch_async'd UI update, killing the process before the alert is
+  // ever shown. That produced a silent, log-less crash on device (seen on
+  // iPhone 8 / iOS 14.7): the game would just disappear with nothing in
+  // Console.app to explain why.
+  IosFatalErrorCallback callback = g_fatal_error_callback;
+  void *context = g_fatal_error_context;
+  if (!callback)
+    return;
+
+  char *messageCopy = message ? strdup(message) : strdup("(unknown error)");
+
+  if ([NSThread isMainThread]) {
+    // Die() can technically be called from the main thread too (e.g. if a
+    // future call site runs before the engine hops to its background
+    // thread) — in that case dispatch_sync-ing to the main queue from the
+    // main thread would deadlock, so just call directly.
+    callback(messageCopy, context);
+    free(messageCopy);
+    return;
+  }
+
+  dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+  dispatch_async(dispatch_get_main_queue(), ^{
+    callback(messageCopy, context);
+    free(messageCopy);
+    dispatch_semaphore_signal(sem);
+  });
+  // Bound the wait so a stuck/misbehaving main thread (e.g. blocked showing
+  // some other alert) can't hang app termination forever — worst case we
+  // just fall back to the old exit-without-alert behavior after the
+  // timeout instead of hanging the process.
+  dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout_seconds * NSEC_PER_SEC)));
+}
+
 void ios_bridge_notify_window_created(struct SDL_Window *window) {
   // Called from the engine's background thread, right after
   // SDL_CreateWindow() returns in main.c. Extract the real UIWindow via
