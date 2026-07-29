@@ -57,6 +57,15 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UIApplicationSupportsIndirectInputEvents: true
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.example.zelda3ios.sfc-rom
+            UTTypeDescription: "SNES ROM (SFC)"
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - sfc
+                - smc
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.zelda3ios
