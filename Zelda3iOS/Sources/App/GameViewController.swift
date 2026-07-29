@@ -92,12 +92,53 @@ final class GameViewController: UIViewController {
             // SDL's window exists but hasn't got a root view yet — retry
             // shortly. Can happen if we're notified a hair before SDL
             // finishes setting up its own root view.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.attachControlsOverlay(to: sdlWindow)
+            //
+            // IMPORTANT: this used to reschedule via
+            // DispatchQueue.main.asyncAfter(...), which returns immediately
+            // and runs the actual retry later, asynchronously. But the C
+            // side (ios_bridge_notify_window_created) calls this callback
+            // via dispatch_sync specifically so the engine's background
+            // thread *blocks* until the overlay is fully attached before
+            // continuing on to SDL_CreateRenderer, which also touches this
+            // same window's view hierarchy. asyncAfter broke that contract:
+            // dispatch_sync would return as soon as this (empty, retrying)
+            // call finished, letting the background thread race ahead into
+            // SDL_CreateRenderer while the *actual* attach — running 50ms
+            // later, asynchronously, off of dispatch_sync's watch — mutated
+            // Auto Layout concurrently with it. That's what produced
+            // "Modifications to the layout engine must not be performed
+            // from a background thread after it has been accessed from the
+            // main thread" (and, worse, the instant no-log crash once that
+            // race resolved unluckily instead of throwing a catchable
+            // exception).
+            //
+            // Busy-polling synchronously here (still on the main thread,
+            // since dispatch_sync delivered us there) keeps this call from
+            // returning — and therefore keeps the background thread's
+            // dispatch_sync blocked — until rootView actually exists.
+            // RunLoop.current.run(...) pumps the main run loop for one
+            // short interval instead of a bare sleep, so if the root view
+            // shows up because of other main-thread work still in flight,
+            // we don't deadlock waiting for it.
+            var attempts = 0
+            while sdlWindow.rootViewController?.view == nil && sdlWindow.subviews.first == nil && attempts < 100 {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+                attempts += 1
             }
+            guard let retryRootView = sdlWindow.rootViewController?.view ?? sdlWindow.subviews.first else {
+                // Gave up after ~1s — proceed without the overlay rather
+                // than block the engine thread forever. The game will
+                // still run; touch controls just won't appear.
+                return
+            }
+            attachOverlay(to: retryRootView)
             return
         }
 
+        attachOverlay(to: rootView)
+    }
+
+    private func attachOverlay(to rootView: UIView) {
         statusLabel.removeFromSuperview()
 
         let overlay = TouchControlsView()
