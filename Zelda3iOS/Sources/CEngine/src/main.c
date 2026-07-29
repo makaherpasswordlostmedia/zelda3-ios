@@ -83,13 +83,22 @@ void NORETURN Die(const char *error) {
   fprintf(stderr, "Error: %s\n", error);
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
   // Report the error to the Swift layer, which shows it in an alert.
-  // GameViewController currently calls ios_bridge_run_game (and therefore
-  // this function, when it's reached) synchronously on the main thread —
-  // see the diagnostic comment in GameViewController.swift's launchEngine()
-  // — so exit() here runs on the main thread too and behaves predictably;
-  // we don't need the background-thread workaround from before. Still
-  // notify first so the alert has a chance to be scheduled before exit().
-  ios_bridge_notify_fatal_error(error);
+  //
+  // IMPORTANT: GameViewController.launchEngine() actually runs
+  // ios_bridge_run_game (and therefore this function) on a *background*
+  // thread (DispatchQueue.global(qos: .userInitiated).async), not the main
+  // thread. The old ios_bridge_notify_fatal_error() hopped to the main
+  // thread with a fire-and-forget dispatch_async to show the alert, and
+  // this function called exit(1) immediately afterwards. That let the
+  // process terminate before the queued main-thread block ever ran, so the
+  // app just vanished with no alert and nothing useful in the console —
+  // this was the silent, log-less crash seen on iPhone 8 / iOS 14.7.
+  //
+  // ios_bridge_notify_fatal_error_and_wait() blocks this background thread
+  // until the alert has actually been presented on the main thread (or a
+  // timeout elapses, in case something upstream prevents it), so exit()
+  // can no longer race the dispatched UI work.
+  ios_bridge_notify_fatal_error_and_wait(error, 5.0);
 #endif
   exit(1);
 }
