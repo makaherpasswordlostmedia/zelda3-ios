@@ -45,6 +45,12 @@ int ios_bridge_run_game(int argc, char **argv);
 // (required for enum cases to import into Swift correctly) so the Swift
 // side sees .up, .down, .left, .right, .select, .start, .b, .a, .y, .x,
 // .l, .r — TouchControlsView.swift must reference these lowercase names.
+// NS_ENUM/NS_SWIFT_NAME require Objective-C (and pull in Foundation, which
+// cannot be compiled as plain C). This header is also included directly
+// from src/main.c, which is compiled as plain C, so the fancy Swift-facing
+// enum spelling is only used when actually compiling as Objective-C; plain
+// C gets an equivalent ordinary C enum with the same underlying values.
+#if defined(__OBJC__)
 #import <Foundation/Foundation.h>
 typedef NS_ENUM(NSInteger, IosButton) {
   kIosBtn_Up NS_SWIFT_NAME(up) = 0,
@@ -60,6 +66,22 @@ typedef NS_ENUM(NSInteger, IosButton) {
   kIosBtn_L NS_SWIFT_NAME(l) = 10,
   kIosBtn_R NS_SWIFT_NAME(r) = 11,
 };
+#else
+typedef enum {
+  kIosBtn_Up = 0,
+  kIosBtn_Down = 1,
+  kIosBtn_Left = 2,
+  kIosBtn_Right = 3,
+  kIosBtn_Select = 4,
+  kIosBtn_Start = 5,
+  kIosBtn_B = 6,
+  kIosBtn_A = 7,
+  kIosBtn_Y = 8,
+  kIosBtn_X = 9,
+  kIosBtn_L = 10,
+  kIosBtn_R = 11,
+} IosButton;
+#endif
 
 // Called from the on-screen touch controls overlay. `pressed` is 1 on
 // touch-down, 0 on touch-up. Thread-safe to call from the UI thread even
