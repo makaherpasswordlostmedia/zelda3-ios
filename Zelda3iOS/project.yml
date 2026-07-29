@@ -30,6 +30,8 @@ targets:
           - "**/*.md"
           - "third_party/opus-1.3.1-stripped/x86/**"
           - "third_party/opus-1.3.1-stripped/mips/**"
+          - "third_party/opus-1.3.1-stripped/arm/celt_pitch_xcorr_arm.s"
+          - "third_party/opus-1.3.1-stripped/arm/celt_pitch_xcorr_arm-gnu.S"
     dependencies:
       - package: SwiftSDL2
         product: SDL
