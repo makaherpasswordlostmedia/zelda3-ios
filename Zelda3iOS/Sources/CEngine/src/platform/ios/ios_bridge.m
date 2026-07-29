@@ -121,7 +121,24 @@ int ios_bridge_import_rom(const char *src_path) {
 }
 
 int ios_bridge_run_game(int argc, char **argv) {
-  return SDL_main(argc, argv);
+  // The last crash we saw (EXC_CRASH/SIGABRT via libc++abi/libobjc, i.e. an
+  // uncaught Objective-C exception) gave no readable message — just raw
+  // addresses. Catching NSException here lets us surface *what* was thrown
+  // instead of just that something crashed. This won't catch a raw
+  // SIGSEGV/mach exception (e.g. a genuine NULL dereference in C code), but
+  // most "uncaught exception" aborts on iOS come from Foundation/UIKit
+  // calls (fopen-equivalents, NSFileManager, NSString, etc.) throwing on
+  // unexpected input, which this will catch.
+  @try {
+    return SDL_main(argc, argv);
+  } @catch (NSException *exception) {
+    char buf[512];
+    snprintf(buf, sizeof(buf), "Uncaught exception: %s: %s",
+             exception.name.UTF8String ?: "(unknown)",
+             exception.reason.UTF8String ?: "(no reason)");
+    ios_bridge_notify_fatal_error(buf);
+    return 1;
+  }
 }
 
 // --- Window-ready notification ------------------------------------------
