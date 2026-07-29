@@ -69,11 +69,16 @@ final class RomPickerViewController: UIViewController {
     }
 
     @objc private func pickButtonTapped() {
-        // .data as a fallback since .sfc has no standard UTType; we filter
-        // by filename extension after the user picks something, so any file
-        // type works — the important gate is the extension check + a
-        // sanity check on file size below.
-        let types: [UTType] = [.data, .item]
+        // .data/.item alone are too generic: Files sometimes shows the file
+        // but won't actually complete a tap-to-select on it (the picker
+        // stays open, delegate never fires) when the file's extension isn't
+        // one of the picker's declared content types. .sfc/.smc have no
+        // system-registered UTType, so we synthesize dynamic ones from the
+        // filename extension and list them explicitly, alongside the
+        // .data/.item fallback for anything else the user might pick.
+        var types: [UTType] = [.data, .item]
+        if let sfc = UTType(filenameExtension: "sfc") { types.append(sfc) }
+        if let smc = UTType(filenameExtension: "smc") { types.append(smc) }
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
         picker.delegate = self
         picker.allowsMultipleSelection = false
