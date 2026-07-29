@@ -122,6 +122,11 @@ final class GameViewController: UIViewController {
     // MARK: - Engine launch
 
     private func launchEngine() {
+        // DIAGNOSTIC (temporary): print progress markers directly onto
+        // statusLabel, visible without a cable/Xcode console, so we can see
+        // exactly how far execution gets before it appears to hang.
+        statusLabel.text = "Loading… [1: launchEngine called]"
+
         // DIAGNOSTIC: SDL2's iOS video backend creates/owns a UIWindow via
         // UIKit APIs inside SDL_Init/SDL_CreateWindow, which (like all UIKit
         // API) must run on the main thread. Running SDL_main on a
@@ -139,9 +144,13 @@ final class GameViewController: UIViewController {
         // instead of calling SDL_main's blocking loop directly.
         let argv0 = strdup("zelda3")
         var argvArray: [UnsafeMutablePointer<CChar>?] = [argv0, nil]
+        statusLabel.text = "Loading… [2: about to call ios_bridge_run_game]"
         _ = argvArray.withUnsafeMutableBufferPointer { buffer -> Int32 in
             ios_bridge_run_game(1, buffer.baseAddress)
         }
         free(argv0)
+        // If we ever get here, ios_bridge_run_game (SDL_main) returned —
+        // meaning the game loop actually exited rather than hanging.
+        statusLabel.text = "Loading… [3: ios_bridge_run_game returned!]"
     }
 }
