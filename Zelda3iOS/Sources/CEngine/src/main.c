@@ -228,9 +228,27 @@ static bool SdlRenderer_Init(SDL_Window *window) {
   if (g_config.shader)
     fprintf(stderr, "Warning: Shaders are supported only with the OpenGL backend\n");
 
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  // SDL_CreateRenderer's iOS backend sets up a UIView (backed by
+  // CAEAGLLayer/Metal) as a subview of the SDL window, which — like
+  // SDL_Init/SDL_CreateWindow above — must happen on the main thread.
+  // Without this, it raced against GameViewController.attachControlsOverlay
+  // (dispatched async to main from ios_bridge_notify_window_created right
+  // before this call), and both touched the same view hierarchy's Auto
+  // Layout engine from different threads at the same time, producing
+  // "Modifications to the layout engine must not be performed from a
+  // background thread after it has been accessed from the main thread."
+  __block SDL_Renderer *renderer = NULL;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    renderer = SDL_CreateRenderer(g_window, -1,
+                                  g_config.output_method == kOutputMethod_SDLSoftware ? SDL_RENDERER_SOFTWARE :
+                                  SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+  });
+#else
   SDL_Renderer *renderer = SDL_CreateRenderer(g_window, -1,
                                               g_config.output_method == kOutputMethod_SDLSoftware ? SDL_RENDERER_SOFTWARE :
                                               SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+#endif
   if (renderer == NULL) {
     printf("Failed to create renderer: %s\n", SDL_GetError());
     return false;
