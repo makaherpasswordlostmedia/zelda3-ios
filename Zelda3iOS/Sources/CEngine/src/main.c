@@ -280,8 +280,14 @@ static const struct RendererFuncs kSdlRendererFuncs  = {
 
 void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
 
+// SDL_MAIN_HANDLED is defined project-wide (see project.yml), which
+// disables SDL2's `#define main SDL_main` trick in SDL_main.h. But
+// Sources/CEngine/src/platform/ios/ios_bridge.m still declares and calls
+// `extern int SDL_main(int argc, char *argv[]);` directly as this engine's
+// real entry point on iOS, so this function must actually be named
+// SDL_main, not main, or the link fails with "_SDL_main" unresolved.
 #undef main
-int main(int argc, char** argv) {
+int SDL_main(int argc, char** argv) {
   argc--, argv++;
   const char *config_file = NULL;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
