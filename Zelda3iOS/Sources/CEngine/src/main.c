@@ -294,7 +294,33 @@ static void SdlRenderer_Destroy() {
 static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
   g_sdl_renderer_rect.w = width;
   g_sdl_renderer_rect.h = height;
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  // SDL_LockTexture touches the SDL renderer's underlying iOS view
+  // (Metal/CAEAGLLayer-backed), which — like SDL_CreateWindow/
+  // SDL_CreateRenderer above — is not safe to call off the main thread on
+  // iOS. This function runs every frame (60x/sec) from the engine's game
+  // loop, which itself runs entirely on a background thread (see
+  // GameViewController.swift's launchEngine()). Doing this from a
+  // background thread was the actual cause of the instant, no-log crash:
+  // SDL_CreateWindow/SDL_CreateRenderer already got the dispatch_sync
+  // treatment above (their crash surfaced as a catchable
+  // NSInternalInconsistencyException once), but every per-frame render
+  // call was still hitting the same iOS restriction from a background
+  // thread — except the GPU/compositor-level failure there isn't a
+  // catchable Objective-C exception or a POSIX signal at all, so nothing
+  // (not Die(), not an NSSetUncaughtExceptionHandler, not a
+  // SIGSEGV/SIGABRT handler) ever got a chance to report it. That's why
+  // the app would vanish with literally zero logs anywhere, immediately
+  // after the very first frame — right when the touch controls overlay
+  // had just finished appearing.
+  __block int lock_result = -1;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    lock_result = SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch);
+  });
+  if (lock_result != 0) {
+#else
   if (SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch) != 0) {
+#endif
     printf("Failed to lock texture: %s\n", SDL_GetError());
     return;
   }
@@ -303,6 +329,19 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
 static void SdlRenderer_EndDraw() {
 
 //  uint64 before = SDL_GetPerformanceCounter();
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  // Same reasoning as SdlRenderer_BeginDraw above: SDL_UnlockTexture,
+  // SDL_RenderClear, SDL_RenderCopy, and SDL_RenderPresent all touch the
+  // iOS Metal/CAEAGLLayer-backed renderer/view and must run on the main
+  // thread, but DrawPpuFrameWithPerf() (which calls this) runs on the
+  // engine's background game-loop thread every frame.
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    SDL_UnlockTexture(g_texture);
+    SDL_RenderClear(g_renderer);
+    SDL_RenderCopy(g_renderer, g_texture, &g_sdl_renderer_rect, NULL);
+    SDL_RenderPresent(g_renderer); // vsyncs to 60 FPS?
+  });
+#else
   SDL_UnlockTexture(g_texture);
 //  uint64 after = SDL_GetPerformanceCounter();
 //  float v = (double)(after - before) / SDL_GetPerformanceFrequency();
@@ -310,6 +349,7 @@ static void SdlRenderer_EndDraw() {
   SDL_RenderClear(g_renderer);
   SDL_RenderCopy(g_renderer, g_texture, &g_sdl_renderer_rect, NULL);
   SDL_RenderPresent(g_renderer); // vsyncs to 60 FPS?
+#endif
 }
 
 static const struct RendererFuncs kSdlRendererFuncs  = {
