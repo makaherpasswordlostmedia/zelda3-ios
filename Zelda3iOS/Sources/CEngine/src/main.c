@@ -38,7 +38,7 @@
 // process outright with no chance to run any handler at all. After a
 // crash, whatever was written last is the last thing that ran
 // successfully; whatever step is missing after that is where to look.
-static void IosCheckpoint(const char *stage) {
+void IosCheckpoint(const char *stage) {
   // ios_bridge_setup_documents_cwd() already chdir()'d into the app's
   // Documents directory before any of this runs (see AppDelegate.swift),
   // so a relative path resolves there correctly.
@@ -587,6 +587,7 @@ int SDL_main(int argc, char** argv) {
   g_audio_mutex = SDL_CreateMutex();
   if (!g_audio_mutex) Die("No mutex");
 
+  IosCheckpoint("before audio init");
   if (g_config.enable_audio) {
     want.freq = g_config.audio_freq;
     want.format = AUDIO_S16;
@@ -605,9 +606,23 @@ int SDL_main(int argc, char** argv) {
     g_frames_per_block = (534 * have.freq) / 32000;
     g_audiobuffer = malloc(g_frames_per_block * have.channels * sizeof(int16));
   }
+  IosCheckpoint("after audio init");
 
+  // This LoadRom() call is the previously-unlogged gap: everything from
+  // here through EmuInitialize()/PatchRom()/snes_loadRom() (see
+  // zelda_cpu_infra.c) had zero checkpoints and zero crash protection, even
+  // though it's exactly where a wrong-version, truncated, or otherwise
+  // incompatible ROM would make hardcoded patch offsets fall outside the
+  // ROM buffer -- an out-of-bounds heap write with no bounds check (the old
+  // PatchRom* helpers only asserted on unexpected *values*, and assert() is
+  // compiled out entirely in release/NDEBUG builds, i.e. exactly what ships
+  // to a device). That produced an instant SIGSEGV with no log and no
+  // catchable exception -- matching "shows the controls for an instant,
+  // then just dies, nothing in Console.app."
+  IosCheckpoint("before LoadRom");
   if (argc >= 1 && !g_run_without_emu)
     LoadRom(argv[0]);
+  IosCheckpoint("after LoadRom");
 
 #if defined(_WIN32)
   _mkdir("saves");
@@ -615,7 +630,9 @@ int SDL_main(int argc, char** argv) {
   mkdir("saves", 0755);
 #endif
 
+  IosCheckpoint("before ZeldaReadSram");
   ZeldaReadSram();
+  IosCheckpoint("after ZeldaReadSram");
 
   for (int i = 0; i < SDL_NumJoysticks(); i++)
     OpenOneGamepad(i);
