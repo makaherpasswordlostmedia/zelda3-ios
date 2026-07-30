@@ -121,7 +121,7 @@ enum CrashLogger {
         return text
     }
 
-    private static func write(_ text: String) {
+    fileprivate static func write(_ text: String) {
         guard let url = crashLogURL else { return }
         let stamped = "Crash at \(Date())\n\(text)\n"
         // Overwrite any previous log; we only need the most recent crash.
