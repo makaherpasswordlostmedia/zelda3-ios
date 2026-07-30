@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <SDL.h>
 #include "ios_bridge.h"
@@ -120,7 +121,29 @@ int ios_bridge_import_rom(const char *src_path) {
   return 1;
 }
 
+// Raw POSIX write-ahead checkpoint, duplicated here (rather than calling
+// into main.c's IosCheckpoint) so this file has zero dependency on
+// main.c's internals and can log the very first instant control reaches
+// ios_bridge_run_game — before SDL_main's own "SDL_main: entry" checkpoint,
+// which only fires *inside* SDL_main after argc/argv have already been
+// touched. If the app crashes between GameViewController.launchEngine()
+// dispatching to this function and SDL_main's own first checkpoint, this
+// is the only thing that can catch it.
+static void EarlyCheckpoint(const char *stage) {
+  NSString *docs = DocumentsPath();
+  if (!docs)
+    return;
+  NSString *path = [docs stringByAppendingPathComponent:@"checkpoint.log"];
+  int fd = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0)
+    return;
+  write(fd, stage, strlen(stage));
+  write(fd, "\n", 1);
+  close(fd);
+}
+
 int ios_bridge_run_game(int argc, char **argv) {
+  EarlyCheckpoint("ios_bridge_run_game: entry (before SDL_main)");
   // The last crash we saw (EXC_CRASH/SIGABRT via libc++abi/libobjc, i.e. an
   // uncaught Objective-C exception) gave no readable message — just raw
   // addresses. Catching NSException here lets us surface *what* was thrown
