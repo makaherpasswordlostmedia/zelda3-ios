@@ -8,7 +8,28 @@ final class RootViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+
+        if let crashLog = CrashLogger.consumePendingCrashLog() {
+            showCrashLog(crashLog)
+            return
+        }
+
         showAppropriateScreen(animated: false)
+    }
+
+    private func showCrashLog(_ text: String) {
+        let alert = UIAlertController(
+            title: "Last launch crashed",
+            message: text,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Copy", style: .default) { _ in
+            UIPasteboard.general.string = text
+        })
+        alert.addAction(UIAlertAction(title: "Continue", style: .default) { [weak self] _ in
+            self?.showAppropriateScreen(animated: false)
+        })
+        present(alert, animated: true)
     }
 
     private func showAppropriateScreen(animated: Bool) {
