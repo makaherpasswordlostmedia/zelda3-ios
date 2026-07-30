@@ -450,19 +450,27 @@ int SDL_main(int argc, char** argv) {
   // that message is a generic fallback, not literally about the #include.
   SDL_SetMainReady();
 #endif
+  IosCheckpoint("SDL_main: entry");
   argc--, argv++;
   const char *config_file = NULL;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
     config_file = argv[1];
     argc -= 2, argv += 2;
   } else {
+    IosCheckpoint("SDL_main: before SwitchDirectory");
     SwitchDirectory();
+    IosCheckpoint("SDL_main: after SwitchDirectory");
   }
+  IosCheckpoint("SDL_main: before ParseConfigFile");
   ParseConfigFile(config_file);
+  IosCheckpoint("SDL_main: after ParseConfigFile, before LoadAssets");
   LoadAssets();
+  IosCheckpoint("SDL_main: after LoadAssets, before LoadLinkGraphics");
   LoadLinkGraphics();
+  IosCheckpoint("SDL_main: after LoadLinkGraphics, before ZeldaInitialize");
 
   ZeldaInitialize();
+  IosCheckpoint("SDL_main: after ZeldaInitialize");
   g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
   g_snes_width = (g_config.extended_aspect_ratio * 2 + 256);
   g_snes_height = (g_config.extend_y ? 240 : 224);
