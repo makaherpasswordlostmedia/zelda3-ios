@@ -39,53 +39,15 @@
 // crash, whatever was written last is the last thing that ran
 // successfully; whatever step is missing after that is where to look.
 static void IosCheckpoint(const char *stage) {
-  // Belt-and-suspenders on the path: ios_bridge_setup_documents_cwd()
-  // should already have chdir()'d into the app's Documents directory, so a
-  // relative path "checkpoint.log" resolving there is the common case. But
-  // under some install methods (e.g. TrollStore) the working directory or
-  // the sandbox's notion of "Documents" turned out to be hard to locate
-  // from outside the process (Filza / Files.app / find all came up empty
-  // even though the app clearly reads/writes zelda3.sfc successfully) — so
-  // instead of trusting cwd, also build an absolute path from $HOME/Documents
-  // and $HOME/tmp, and write the same line to *all* candidate locations.
-  // Whichever one turns out to be the real, inspectable Documents folder,
-  // the checkpoint will be there.
-  static const char *rel = "checkpoint.log";
-  char abs_docs[512];
-  char abs_tmp[512];
-  const char *home = getenv("HOME");
-  int have_abs_docs = 0, have_abs_tmp = 0;
-  if (home) {
-    snprintf(abs_docs, sizeof(abs_docs), "%s/Documents/checkpoint.log", home);
-    snprintf(abs_tmp, sizeof(abs_tmp), "%s/tmp/checkpoint.log", home);
-    have_abs_docs = 1;
-    have_abs_tmp = 1;
-  }
-
-  const char *paths[3];
-  int have[3];
-  paths[0] = rel;          have[0] = 1;
-  paths[1] = abs_docs;     have[1] = have_abs_docs;
-  paths[2] = abs_tmp;      have[2] = have_abs_tmp;
-
-  for (int i = 0; i < 3; i++) {
-    if (!have[i])
-      continue;
-    int fd = open(paths[i], O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd < 0)
-      continue;
-    write(fd, stage, strlen(stage));
-    write(fd, "\n", 1);
-    close(fd);
-  }
-
-  // Also mirror every checkpoint to stderr. On some install methods the
-  // filesystem-based logs above have proven impossible to locate from
-  // outside the process, but stderr from a foreground app is *also*
-  // picked up by the on-device NewTerm/syslog tooling in some
-  // configurations, and costs nothing extra to try.
-  fprintf(stderr, "[IosCheckpoint] %s\n", stage);
-  fflush(stderr);
+  // ios_bridge_setup_documents_cwd() already chdir()'d into the app's
+  // Documents directory before any of this runs (see AppDelegate.swift),
+  // so a relative path resolves there correctly.
+  int fd = open("checkpoint.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0)
+    return;
+  write(fd, stage, strlen(stage));
+  write(fd, "\n", 1);
+  close(fd);
 }
 #else
 #define IosCheckpoint(stage) ((void)0)
