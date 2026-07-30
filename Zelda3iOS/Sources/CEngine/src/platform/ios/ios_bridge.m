@@ -274,18 +274,47 @@ void ios_bridge_notify_window_created(struct SDL_Window *window) {
     return;
   }
 
-  // dispatch_sync (not async): the caller (SdlRenderer_Init in main.c,
-  // right after this returns) goes on to call SDL_CreateRenderer, which
-  // also touches this same UIWindow's view hierarchy on the main thread.
-  // With dispatch_async, that could run concurrently with
-  // attachControlsOverlay's NSLayoutConstraint.activate below, and both
-  // touching the same Auto Layout engine from different threads at once
-  // produced "Modifications to the layout engine must not be performed
-  // from a background thread after it has been accessed from the main
-  // thread." Waiting here for the overlay to finish attaching keeps every
-  // touch of this window's view hierarchy serialized through the main
-  // thread, one at a time.
-  dispatch_sync(dispatch_get_main_queue(), ^{
-    callback(retainedWindowRef, context);
+  // IMPORTANT: this used to be dispatch_sync, so the engine's background
+  // thread would block until the Swift callback (attachControlsOverlay)
+  // finished — including its retry loop, which busy-polled by calling
+  // RunLoop.current.run(until:) *from inside this same dispatch_sync
+  // block's execution on the main thread*.
+  //
+  // That combination is unsafe: GCD's dispatch_sync delivers this block to
+  // the main thread via the *dispatch queue* mechanism, not by handing
+  // control to RunLoop.main in the normal way a run-loop source would. A
+  // RunLoop.current.run() called from inside that GCD-delivered block does
+  // not reliably pump the same sources SDL_CreateWindow's continuation
+  // needs, because that continuation is itself waiting for *this*
+  // dispatch_sync to return. The two threads end up waiting on each other:
+  // the background thread blocks in dispatch_sync waiting for Swift, and
+  // the retry loop on the main thread blocks waiting for state that only
+  // changes once SDL's own main-thread work continues -- work that can't
+  // run until dispatch_sync returns. iOS's launch watchdog then kills the
+  // process outright (SIGKILL, "process-launch watchdog transgression")
+  // well before any in-process crash/exception handler, checkpoint write,
+  // or alert ever gets a chance to run -- which is exactly the "shows
+  // controls for an instant, then just dies, absolutely nothing in any
+  // log" symptom this was causing.
+  //
+  // Fix: dispatch_async instead, and wait for Swift to *signal* completion
+  // via a semaphore with a bounded timeout, rather than letting GCD itself
+  // hold the main queue hostage across a nested run-loop poll. This keeps
+  // the "don't call SDL_CreateRenderer until the overlay is attached"
+  // guarantee (we still block this background thread until attach
+  // finishes or the timeout elapses) without ever nesting a busy-wait
+  // inside the main thread's own dispatch_sync execution.
+  dispatch_semaphore_t attachDone = dispatch_semaphore_create(0);
+  __block void *blockContext = context;
+  __block IosWindowReadyCallback blockCallback = callback;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    blockCallback(retainedWindowRef, blockContext);
+    dispatch_semaphore_signal(attachDone);
   });
+  // 2s is generous for attaching a view hierarchy but still bounded, so a
+  // pathological case can't hang the engine thread (and therefore the
+  // whole app) forever -- worst case we just proceed to SDL_CreateRenderer
+  // slightly before the overlay finishes attaching, same as the old
+  // "give up after ~1s" fallback already did in the Swift retry loop.
+  dispatch_semaphore_wait(attachDone, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)));
 }
