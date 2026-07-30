@@ -15,7 +15,7 @@ Snes *g_snes;
 Cpu *g_cpu;
 uint8 g_emulated_ram[0x20000];
 
-static void PatchRom(uint8 *rom);
+static void PatchRom(uint8 *rom, size_t rom_size);
 
 uint8 *GetPtr(uint32 addr) {
   Cart *cart = g_snes->cart;
@@ -373,30 +373,98 @@ again_mine:
 }
 
 
+// g_rom_patch_size holds the actual allocated size of the ROM buffer that
+// PatchRom() operates on (set at the top of PatchRom(), from the `size`
+// EmuInitialize() was called with). All patch helpers below check against
+// it before writing.
+//
+// Why this exists: these helpers used to trust every hardcoded
+// (addr >> 16) << 15 | (addr & 0x7fff) offset unconditionally, and only
+// double-checked expected byte/word *values* via assert() -- which NDEBUG
+// (release builds, what actually ships to a device) compiles out entirely.
+// On a ROM that's the wrong version, truncated, or otherwise doesn't map
+// the way these hardcoded LoROM offsets assume, that produced out-of-bounds
+// writes into a heap buffer with no check and no log: an instant SIGSEGV on
+// device, indistinguishable from "no logs, dies right after showing
+// controls for a moment" -- because that's exactly the window in which
+// LoadRom() -> EmuInitialize() -> PatchRom() runs.
+//
+// PATCH_ROM_ASSERT_FATAL: on iOS this calls Die() (visible alert +
+// checkpoint.log entry) instead of silently corrupting memory or crashing
+// with no trace, so a wrong/corrupt ROM produces a readable error telling
+// the user their ROM doesn't match, instead of an unexplained crash.
+static size_t g_rom_patch_size;
+
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+#define PATCH_ROM_ASSERT_FATAL(msg) Die(msg)
+#else
+#define PATCH_ROM_ASSERT_FATAL(msg) do { fprintf(stderr, "%s\n", msg); abort(); } while (0)
+#endif
+
+static inline uint32_t PatchRomOffset(uint32_t addr) {
+  return (addr >> 16) << 15 | (addr & 0x7fff);
+}
+
+static void PatchRomCheckBounds(uint32_t offset, uint32_t n) {
+  // g_rom_patch_size == 0 means PatchRom() hasn't recorded a size yet
+  // (shouldn't happen in normal flow, but don't let an unset size silently
+  // disable the check) -- treat as "no valid size", i.e. always fail.
+  if (g_rom_patch_size == 0 || (uint64_t)offset + n > g_rom_patch_size) {
+    PATCH_ROM_ASSERT_FATAL(
+        "This ROM doesn't match the expected format/version for these "
+        "patches (a patch offset fell outside the ROM). Please make sure "
+        "you're using an unmodified, correct-region 'zelda3.sfc'.");
+  }
+}
+
 static void PatchRomBP(uint8_t *rom, uint32_t addr) {
-  rom[(addr >> 16) << 15 | (addr & 0x7fff)] = 0;
+  uint32_t offset = PatchRomOffset(addr);
+  PatchRomCheckBounds(offset, 1);
+  rom[offset] = 0;
 }
 
 static void PatchRomByte(uint8_t *rom, uint32_t addr, uint8 old_value, uint8 value) {
-  assert(rom[(addr >> 16) << 15 | (addr & 0x7fff)] == old_value);
-  rom[(addr >> 16) << 15 | (addr & 0x7fff)] = value;
+  uint32_t offset = PatchRomOffset(addr);
+  PatchRomCheckBounds(offset, 1);
+  if (rom[offset] != old_value) {
+    PATCH_ROM_ASSERT_FATAL(
+        "This ROM doesn't match the expected format/version for these "
+        "patches (unexpected byte at a patch offset). Please make sure "
+        "you're using an unmodified, correct-region 'zelda3.sfc'.");
+  }
+  rom[offset] = value;
 }
 
 static void PatchRomWord(uint8_t *rom, uint32_t addr, uint16 old_value, uint16 value) {
-  assert(WORD(rom[(addr >> 16) << 15 | (addr & 0x7fff)]) == old_value);
-  WORD(rom[(addr >> 16) << 15 | (addr & 0x7fff)]) = value;
+  uint32_t offset = PatchRomOffset(addr);
+  PatchRomCheckBounds(offset, 2);
+  if (WORD(rom[offset]) != old_value) {
+    PATCH_ROM_ASSERT_FATAL(
+        "This ROM doesn't match the expected format/version for these "
+        "patches (unexpected word at a patch offset). Please make sure "
+        "you're using an unmodified, correct-region 'zelda3.sfc'.");
+  }
+  WORD(rom[offset]) = value;
 }
 
 static void PatchRomArray(uint8_t *rom, uint32_t addr, const uint8 *values, int n) {
   for (int i = 0; i < n; i++) {
-    rom[(addr >> 16) << 15 | (addr & 0x7fff)] = values[i];
+    uint32_t offset = PatchRomOffset(addr);
+    PatchRomCheckBounds(offset, 1);
+    rom[offset] = values[i];
     addr += 1;
   }
 }
 
 
 
-static void PatchRom(uint8_t *rom) {
+static void PatchRom(uint8_t *rom, size_t rom_size) {
+  // Record the real buffer size for PatchRomCheckBounds() to validate every
+  // hardcoded patch offset against, so a wrong/truncated/corrupt ROM fails
+  // with a readable "wrong ROM" error (via Die()) instead of writing past
+  // the end of the buffer and crashing the process with no trace at all.
+  g_rom_patch_size = rom_size;
+
   //  fix a bug with unitialized memory
   {
     uint8_t *p = rom + 0x36434;
@@ -575,11 +643,30 @@ static void PatchRom(uint8_t *rom) {
 
 
 
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+void IosCheckpoint(const char *stage); // defined in main.c
+#else
+#define IosCheckpoint(stage) ((void)0)
+#endif
+
 bool EmuInitialize(uint8 *data, size_t size) {
-  PatchRom(data);
+  // These checkpoints cover the previously-unlogged gap between
+  // "renderer initialized" (last checkpoint main.c wrote before this) and
+  // the game loop starting -- LoadRom() -> EmuInitialize() -> PatchRom() /
+  // snes_loadRom() was exactly where a mismatched or corrupt ROM could
+  // crash with no trace at all (see PatchRomCheckBounds() above). If a
+  // crash happens between two of these checkpoint.log entries (or right
+  // after the last one, with none after it), that pinpoints which of these
+  // three steps is responsible.
+  IosCheckpoint("EmuInitialize: before PatchRom");
+  PatchRom(data, size);
+  IosCheckpoint("EmuInitialize: after PatchRom");
   g_snes = snes_init(g_emulated_ram);
   g_cpu = g_snes->cpu;
 
   ZeldaSetupEmuCallbacks(g_emulated_ram, &EmuRunFrameWithCompare, &EmuSynchronizeWholeState);
-  return snes_loadRom(g_snes, data, (int)size);
+  IosCheckpoint("EmuInitialize: before snes_loadRom");
+  bool result = snes_loadRom(g_snes, data, (int)size);
+  IosCheckpoint("EmuInitialize: after snes_loadRom");
+  return result;
 }
