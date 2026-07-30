@@ -65,22 +65,18 @@ final class RootViewController: UIViewController {
         }
 
         guard foundAny else {
-            // Nothing found anywhere. Surface $HOME's actual layout so we
-            // can see where this install's sandbox really put things,
-            // instead of guessing blind again.
-            let fm = FileManager.default
-            var listing = "No checkpoint.log found in any candidate location.\n"
-            listing += "HOME = \(home.path)\n"
-            if let items = try? fm.contentsOfDirectory(atPath: home.path) {
-                listing += "HOME contents: \(items.joined(separator: ", "))\n"
-            }
-            let docsPath = home.appendingPathComponent("Documents").path
-            if let items = try? fm.contentsOfDirectory(atPath: docsPath) {
-                listing += "Documents contents: \(items.joined(separator: ", "))\n"
-            } else {
-                listing += "Documents directory not accessible at \(docsPath)\n"
-            }
-            return listing
+            // Nothing found anywhere. Deliberately NOT scanning directory
+            // contents here (contentsOfDirectory over an unusual sandbox
+            // filesystem, e.g. under TrollStore, turned out to be able to
+            // hang rather than just being slow — indistinguishable on
+            // screen from a crash, since it blocks the main thread before
+            // showAppropriateScreen() ever runs). Just report the fixed
+            // set of paths we already tried, nothing more.
+            return "No checkpoint.log found. Tried:\n" +
+                candidates.map { $0.path }.joined(separator: "\n")
+        }
+        if combined.count > 4000 {
+            combined = String(combined.prefix(4000)) + "\n... (truncated)"
         }
         return combined
     }
