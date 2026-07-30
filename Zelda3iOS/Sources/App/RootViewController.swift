@@ -9,12 +9,44 @@ final class RootViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
 
-        if let crashLog = CrashLogger.consumePendingCrashLog() {
-            showCrashLog(crashLog)
+        let swiftCrashLog = CrashLogger.consumePendingCrashLog()
+        let checkpointLog = Self.consumePendingCheckpointLog()
+
+        if swiftCrashLog != nil || checkpointLog != nil {
+            var combined = ""
+            if let checkpointLog {
+                combined += "=== C engine checkpoints (last run) ===\n\(checkpointLog)\n\n"
+            }
+            if let swiftCrashLog {
+                combined += "=== Swift crash/exception log ===\n\(swiftCrashLog)"
+            }
+            showCrashLog(combined)
             return
         }
 
         showAppropriateScreen(animated: false)
+    }
+
+    /// Reads Documents/checkpoint.log, written by the C engine
+    /// (IosCheckpoint() in Sources/CEngine/src/main.c) as a raw,
+    /// unbuffered, write-ahead trail of every major init/render step. If
+    /// the app is killed by something no in-process handler can catch
+    /// (e.g. a hard SIGKILL from a GPU/compositor/watchdog violation),
+    /// this is often the *only* record of how far execution actually got.
+    /// Deletes the file after reading so it doesn't get confused with a
+    /// future run's checkpoints.
+    private static func consumePendingCheckpointLog() -> String? {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let url = docs.appendingPathComponent("checkpoint.log")
+        guard let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8),
+              !text.isEmpty else {
+            return nil
+        }
+        try? FileManager.default.removeItem(at: url)
+        return text
     }
 
     private func showCrashLog(_ text: String) {
