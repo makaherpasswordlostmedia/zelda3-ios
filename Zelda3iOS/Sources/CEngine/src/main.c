@@ -76,9 +76,6 @@ static void IosCheckpoint(const char *stage) {
       continue;
     write(fd, stage, strlen(stage));
     write(fd, "\n", 1);
-    // Force this line to physical storage right now, so it survives even
-    // an instant SIGKILL landing on the very next line of code.
-    fsync(fd);
     close(fd);
   }
 
@@ -861,11 +858,7 @@ static void HandleCommand(uint32 j, bool pressed) {
 // needing HandleCommand itself to be non-static or its enum exposed.
 // Button-index-to-bit convention matches kDefaultGamepadCmds in config.c.
 void ios_bridge_set_button(IosButton button, int pressed) {
-  char buf[64];
-  snprintf(buf, sizeof(buf), "ios_bridge_set_button(%d, %d) begin", (int)button, pressed);
-  IosCheckpoint(buf);
   HandleCommand(kKeys_Controls + (uint32)button, pressed != 0);
-  IosCheckpoint("ios_bridge_set_button end");
 }
 #endif
 
