@@ -14,8 +14,30 @@ final class GameViewController: UIViewController {
     private var didLaunch = false
     private var controlsOverlay: TouchControlsView?
 
+    /// Appends a line to Documents/checkpoint.log directly from Swift, with
+    /// no dependency on any C code having run yet. This exists to catch a
+    /// crash between viewDidAppear firing and ios_bridge_run_game actually
+    /// being entered — a window the C-side checkpoints (main.c,
+    /// ios_bridge.m) can't cover since they only run once we're already
+    /// inside C code.
+    private static func earlyCheckpoint(_ stage: String) {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let url = docs.appendingPathComponent("checkpoint.log")
+        let line = (stage + "\n").data(using: .utf8)!
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line)
+            try? handle.close()
+        } else {
+            try? line.write(to: url)
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        Self.earlyCheckpoint("GameViewController: viewDidLoad")
         view.backgroundColor = .black
 
         statusLabel.text = "Loading…"
@@ -31,10 +53,12 @@ final class GameViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        Self.earlyCheckpoint("GameViewController: viewDidAppear")
         guard !didLaunch else { return }
         didLaunch = true
         registerWindowReadyCallback()
         registerFatalErrorCallback()
+        Self.earlyCheckpoint("GameViewController: callbacks registered, calling launchEngine")
         launchEngine()
     }
 
@@ -179,7 +203,9 @@ final class GameViewController: UIViewController {
         // Documents before this call; the engine's existing LoadAssets()
         // path in main.c will patch the user's own ROM into
         // zelda3_assets.dat on first run.
+        Self.earlyCheckpoint("GameViewController: launchEngine, before background dispatch")
         DispatchQueue.global(qos: .userInitiated).async {
+            Self.earlyCheckpoint("GameViewController: on background thread, before ios_bridge_run_game")
             // SDL_main (src/main.c) does `argc--, argv++` right at the
             // start — the standard "skip argv[0] (program name)" idiom. It
             // expects argv[0] to be the program name and any real
