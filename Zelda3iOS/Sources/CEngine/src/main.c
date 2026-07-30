@@ -19,6 +19,41 @@
 
 #include "snes/ppu.h"
 
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+#include <fcntl.h>
+// Raw POSIX write-ahead checkpoint logger.
+//
+// We have no Mac/Xcode/Console.app, "Share iPhone Analytics" isn't
+// producing anything usable, and neither Objective-C exception handling
+// nor POSIX signal handlers have caught whatever is killing this app —
+// which points at a GPU/compositor-level or watchdog-level kill (e.g.
+// SIGKILL, or a Metal/IOSurface validation failure enforced outside our
+// process) that no in-process handler can intercept, no matter how early
+// it's installed.
+//
+// So instead of trying to catch the crash, this logs *every step* as it
+// happens, using the most primitive I/O available (raw open/write/close,
+// no buffering, no Foundation, no Swift) so a checkpoint is durably on
+// disk the instant it's written — even if the very next line kills the
+// process outright with no chance to run any handler at all. After a
+// crash, whatever was written last is the last thing that ran
+// successfully; whatever step is missing after that is where to look.
+static void IosCheckpoint(const char *stage) {
+  // ios_bridge_setup_documents_cwd() already chdir()'d into the app's
+  // Documents directory before any of this runs (see AppDelegate.swift),
+  // so a relative path resolves there correctly.
+  int fd = open("checkpoint.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0)
+    return;
+  write(fd, stage, strlen(stage));
+  write(fd, "\n", 1);
+  close(fd);
+}
+#else
+#define IosCheckpoint(stage) ((void)0)
+#endif
+
+
 #include "types.h"
 #include "variables.h"
 
@@ -172,6 +207,12 @@ static SDL_HitTestResult HitTestCallback(SDL_Window *win, const SDL_Point *pt, v
 }
 
 static void DrawPpuFrameWithPerf() {
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  static int frame_num = 0;
+  char frame_buf[64];
+  snprintf(frame_buf, sizeof(frame_buf), "frame %d: before BeginDraw", frame_num);
+  IosCheckpoint(frame_buf);
+#endif
   int render_scale = PpuGetCurrentRenderScale(g_zenv.ppu, g_ppu_render_flags);
   uint8 *pixel_buffer = 0;
   int pitch = 0;
@@ -179,6 +220,10 @@ static void DrawPpuFrameWithPerf() {
   g_renderer_funcs.BeginDraw(g_snes_width * render_scale,
                              g_snes_height * render_scale,
                              &pixel_buffer, &pitch);
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  snprintf(frame_buf, sizeof(frame_buf), "frame %d: after BeginDraw, before ZeldaDrawPpuFrame", frame_num);
+  IosCheckpoint(frame_buf);
+#endif
   if (g_display_perf || g_config.display_perf_title) {
     static float history[64], average;
     static int history_pos;
@@ -193,9 +238,18 @@ static void DrawPpuFrameWithPerf() {
   } else {
     ZeldaDrawPpuFrame(pixel_buffer, pitch, g_ppu_render_flags);
   }
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  snprintf(frame_buf, sizeof(frame_buf), "frame %d: after ZeldaDrawPpuFrame, before EndDraw", frame_num);
+  IosCheckpoint(frame_buf);
+#endif
   if (g_display_perf)
     RenderNumber(pixel_buffer + pitch * render_scale, pitch, g_curr_fps, render_scale == 4);
   g_renderer_funcs.EndDraw();
+#if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
+  snprintf(frame_buf, sizeof(frame_buf), "frame %d: after EndDraw", frame_num);
+  IosCheckpoint(frame_buf);
+  frame_num++;
+#endif
 }
 
 static SDL_mutex *g_audio_mutex;
@@ -314,9 +368,13 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
   // after the very first frame — right when the touch controls overlay
   // had just finished appearing.
   __block int lock_result = -1;
+  IosCheckpoint("BeginDraw: before dispatch_sync(LockTexture)");
   dispatch_sync(dispatch_get_main_queue(), ^{
+    IosCheckpoint("BeginDraw: inside dispatch_sync, before SDL_LockTexture");
     lock_result = SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch);
+    IosCheckpoint("BeginDraw: inside dispatch_sync, after SDL_LockTexture");
   });
+  IosCheckpoint("BeginDraw: after dispatch_sync(LockTexture)");
   if (lock_result != 0) {
 #else
   if (SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch) != 0) {
@@ -335,12 +393,19 @@ static void SdlRenderer_EndDraw() {
   // iOS Metal/CAEAGLLayer-backed renderer/view and must run on the main
   // thread, but DrawPpuFrameWithPerf() (which calls this) runs on the
   // engine's background game-loop thread every frame.
+  IosCheckpoint("EndDraw: before dispatch_sync");
   dispatch_sync(dispatch_get_main_queue(), ^{
+    IosCheckpoint("EndDraw: before SDL_UnlockTexture");
     SDL_UnlockTexture(g_texture);
+    IosCheckpoint("EndDraw: before SDL_RenderClear");
     SDL_RenderClear(g_renderer);
+    IosCheckpoint("EndDraw: before SDL_RenderCopy");
     SDL_RenderCopy(g_renderer, g_texture, &g_sdl_renderer_rect, NULL);
+    IosCheckpoint("EndDraw: before SDL_RenderPresent");
     SDL_RenderPresent(g_renderer); // vsyncs to 60 FPS?
+    IosCheckpoint("EndDraw: after SDL_RenderPresent");
   });
+  IosCheckpoint("EndDraw: after dispatch_sync");
 #else
   SDL_UnlockTexture(g_texture);
 //  uint64 after = SDL_GetPerformanceCounter();
@@ -449,10 +514,12 @@ int SDL_main(int argc, char** argv) {
   // source — is safe to call off the main thread as long as SDL_Init
   // already completed its one-time UIKit setup) on this background
   // thread as before.
+  IosCheckpoint("before SDL_Init");
   __block int sdl_init_result = -1;
   dispatch_sync(dispatch_get_main_queue(), ^{
     sdl_init_result = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER);
   });
+  IosCheckpoint("after SDL_Init");
   if (sdl_init_result != 0) {
 #else
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -479,10 +546,12 @@ int SDL_main(int argc, char** argv) {
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
   // Same reasoning as the SDL_Init hop above: SDL_CreateWindow's iOS
   // backend creates a real UIWindow, which must happen on the main thread.
+  IosCheckpoint("before SDL_CreateWindow");
   __block SDL_Window* window = NULL;
   dispatch_sync(dispatch_get_main_queue(), ^{
     window = SDL_CreateWindow(kWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, g_win_flags);
   });
+  IosCheckpoint("after SDL_CreateWindow");
 #else
   SDL_Window* window = SDL_CreateWindow(kWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, g_win_flags);
 #endif
@@ -499,15 +568,19 @@ int SDL_main(int argc, char** argv) {
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
   // Let the iOS bridge grab the real UIWindow SDL just created, so the
   // Swift-side touch controls overlay can be attached on top of it.
+  IosCheckpoint("before ios_bridge_notify_window_created");
   ios_bridge_notify_window_created(window);
+  IosCheckpoint("after ios_bridge_notify_window_created");
 #endif
 
+  IosCheckpoint("before g_renderer_funcs.Initialize");
   if (!g_renderer_funcs.Initialize(window)) {
 #if defined(__IPHONEOS__) || defined(TARGET_OS_IPHONE)
     ios_bridge_notify_fatal_error("DIAG: g_renderer_funcs.Initialize(window) failed");
 #endif
     return 1;
   }
+  IosCheckpoint("after g_renderer_funcs.Initialize");
 
   SDL_AudioDeviceID device = 0;
   SDL_AudioSpec want = { 0 }, have;
