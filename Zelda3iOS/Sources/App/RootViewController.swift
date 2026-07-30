@@ -1,16 +1,45 @@
 import UIKit
+import Darwin
 
 /// Decides, at launch and whenever we return to the foreground after a
 /// picker flow, whether to show the "pick a ROM" screen or hand off to the
 /// SDL2 game engine.
 final class RootViewController: UIViewController {
 
+    /// Raw POSIX checkpoint write, duplicated here (rather than sharing code
+    /// with GameViewController) so this — the very first UIKit code that
+    /// runs after AppDelegate — can log before doing anything else at all,
+    /// including before it reads and deletes any previous checkpoint.log.
+    /// Uses open/write/close directly (not FileHandle) because FileHandle's
+    /// write(_:) can raise an uncaught NSException on failure, which `try?`
+    /// can't catch — see the matching comment in GameViewController.swift.
+    private static func earlyCheckpoint(_ stage: String) {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let path = docs.appendingPathComponent("checkpoint.log").path
+        let fd = path.withCString { open($0, O_WRONLY | O_CREAT | O_APPEND, 0o644) }
+        guard fd >= 0 else { return }
+        let line = stage + "\n"
+        _ = line.withCString { write(fd, $0, strlen($0)) }
+        close(fd)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
-
+        // IMPORTANT: consume (read + delete) the *previous* run's
+        // checkpoint.log before writing anything to it ourselves. If we
+        // wrote our own "viewDidLoad start" checkpoint first, it would be
+        // sitting in the same file consumePendingCheckpointLog() reads
+        // right below, mixing this run's just-started trail in with
+        // whatever the last (crashed) run left behind and making the alert
+        // confusing to read.
         let swiftCrashLog = CrashLogger.consumePendingCrashLog()
         let checkpointLog = Self.consumePendingCheckpointLog()
+
+        // Now it's safe to start this run's own trail.
+        Self.earlyCheckpoint("RootViewController: viewDidLoad start")
+        view.backgroundColor = .black
 
         if swiftCrashLog != nil || checkpointLog != nil {
             var combined = ""

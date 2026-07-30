@@ -1,4 +1,5 @@
 import UIKit
+import Darwin
 
 /// Hosts the running game. Responsibilities:
 ///  1. Register a callback (via ios_bridge_set_window_ready_callback) so we
@@ -20,19 +21,26 @@ final class GameViewController: UIViewController {
     /// being entered — a window the C-side checkpoints (main.c,
     /// ios_bridge.m) can't cover since they only run once we're already
     /// inside C code.
+    ///
+    /// Uses raw POSIX open/write/close (via Darwin), not FileHandle.
+    /// FileHandle's write(_:) is an Objective-C-style API that raises an
+    /// uncaught NSException on failure (e.g. certain sandbox/permission
+    /// edge cases) rather than throwing a catchable Swift Error — `try?`
+    /// only catches Swift Error, so a FileHandle failure here could itself
+    /// crash the process with no log, which would be self-defeating for a
+    /// checkpoint logger. Raw POSIX calls have plain integer/errno error
+    /// reporting with no exception machinery involved at all, matching
+    /// exactly how the C-side IosCheckpoint()/EarlyCheckpoint() do this.
     private static func earlyCheckpoint(_ stage: String) {
         guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return
         }
-        let url = docs.appendingPathComponent("checkpoint.log")
-        let line = (stage + "\n").data(using: .utf8)!
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(line)
-            try? handle.close()
-        } else {
-            try? line.write(to: url)
-        }
+        let path = docs.appendingPathComponent("checkpoint.log").path
+        let fd = path.withCString { open($0, O_WRONLY | O_CREAT | O_APPEND, 0o644) }
+        guard fd >= 0 else { return }
+        let line = stage + "\n"
+        _ = line.withCString { write(fd, $0, strlen($0)) }
+        close(fd)
     }
 
     override func viewDidLoad() {
