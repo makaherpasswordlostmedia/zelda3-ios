@@ -36,17 +36,53 @@ final class RootViewController: UIViewController {
     /// Deletes the file after reading so it doesn't get confused with a
     /// future run's checkpoints.
     private static func consumePendingCheckpointLog() -> String? {
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return nil
+        // We've seen install methods (e.g. TrollStore) where the on-disk
+        // Documents folder was hard to locate from outside the process, so
+        // the C side (IosCheckpoint(), main.c) now writes to several
+        // candidate locations. Check all of them here and combine whatever
+        // is found, so we don't miss the log just because it landed
+        // somewhere other than FileManager's .documentDirectory.
+        var candidates: [URL] = []
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            candidates.append(docs.appendingPathComponent("checkpoint.log"))
         }
-        let url = docs.appendingPathComponent("checkpoint.log")
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8),
-              !text.isEmpty else {
-            return nil
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        candidates.append(home.appendingPathComponent("Documents/checkpoint.log"))
+        candidates.append(home.appendingPathComponent("tmp/checkpoint.log"))
+        // Also try a plain relative lookup from the process's actual cwd,
+        // in case it differs from all of the above.
+        candidates.append(URL(fileURLWithPath: "checkpoint.log"))
+
+        var combined = ""
+        var foundAny = false
+        for url in candidates {
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8),
+                  !text.isEmpty else { continue }
+            foundAny = true
+            combined += "--- \(url.path) ---\n\(text)\n"
+            try? FileManager.default.removeItem(at: url)
         }
-        try? FileManager.default.removeItem(at: url)
-        return text
+
+        guard foundAny else {
+            // Nothing found anywhere. Surface $HOME's actual layout so we
+            // can see where this install's sandbox really put things,
+            // instead of guessing blind again.
+            let fm = FileManager.default
+            var listing = "No checkpoint.log found in any candidate location.\n"
+            listing += "HOME = \(home.path)\n"
+            if let items = try? fm.contentsOfDirectory(atPath: home.path) {
+                listing += "HOME contents: \(items.joined(separator: ", "))\n"
+            }
+            let docsPath = home.appendingPathComponent("Documents").path
+            if let items = try? fm.contentsOfDirectory(atPath: docsPath) {
+                listing += "Documents contents: \(items.joined(separator: ", "))\n"
+            } else {
+                listing += "Documents directory not accessible at \(docsPath)\n"
+            }
+            return listing
+        }
+        return combined
     }
 
     private func showCrashLog(_ text: String) {
