@@ -93,48 +93,57 @@ final class GameViewController: UIViewController {
             // shortly. Can happen if we're notified a hair before SDL
             // finishes setting up its own root view.
             //
-            // IMPORTANT: this used to reschedule via
-            // DispatchQueue.main.asyncAfter(...), which returns immediately
-            // and runs the actual retry later, asynchronously. But the C
-            // side (ios_bridge_notify_window_created) calls this callback
-            // via dispatch_sync specifically so the engine's background
-            // thread *blocks* until the overlay is fully attached before
-            // continuing on to SDL_CreateRenderer, which also touches this
-            // same window's view hierarchy. asyncAfter broke that contract:
-            // dispatch_sync would return as soon as this (empty, retrying)
-            // call finished, letting the background thread race ahead into
-            // SDL_CreateRenderer while the *actual* attach — running 50ms
-            // later, asynchronously, off of dispatch_sync's watch — mutated
-            // Auto Layout concurrently with it. That's what produced
-            // "Modifications to the layout engine must not be performed
-            // from a background thread after it has been accessed from the
-            // main thread" (and, worse, the instant no-log crash once that
-            // race resolved unluckily instead of throwing a catchable
-            // exception).
+            // This used to busy-poll with RunLoop.current.run(until:) in a
+            // loop, on the theory that the C side called this callback via
+            // dispatch_sync, so the engine's background thread would block
+            // until attach finished, and pumping the run loop here would
+            // safely let other pending main-thread work (like the rest of
+            // SDL_CreateWindow's continuation) complete in the meantime.
             //
-            // Busy-polling synchronously here (still on the main thread,
-            // since dispatch_sync delivered us there) keeps this call from
-            // returning — and therefore keeps the background thread's
-            // dispatch_sync blocked — until rootView actually exists.
-            // RunLoop.current.run(...) pumps the main run loop for one
-            // short interval instead of a bare sleep, so if the root view
-            // shows up because of other main-thread work still in flight,
-            // we don't deadlock waiting for it.
-            var attempts = 0
-            while sdlWindow.rootViewController?.view == nil && sdlWindow.subviews.first == nil && attempts < 100 {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-                attempts += 1
-            }
-            guard let retryRootView = sdlWindow.rootViewController?.view ?? sdlWindow.subviews.first else {
-                // Gave up after ~1s — proceed without the overlay rather
-                // than block the engine thread forever. The game will
-                // still run; touch controls just won't appear.
-                return
-            }
-            attachOverlay(to: retryRootView)
+            // That combination was unsafe in practice: a RunLoop.current
+            // .run() called from *inside* a block GCD is currently
+            // executing on the main thread doesn't reliably pump the same
+            // sources that other queued main-thread work depends on — and
+            // that other work could itself be blocked waiting for the very
+            // dispatch_sync this call was nested inside of. The two threads
+            // could end up circularly waiting on each other, which iOS's
+            // launch watchdog resolves by SIGKILLing the process outright —
+            // before any crash handler, checkpoint write, or alert ever
+            // gets a chance to run. That produced exactly the "controls
+            // flash for an instant, then the app just vanishes, nothing in
+            // any log" symptom.
+            //
+            // Fix: the C side now calls this via dispatch_async and waits
+            // on a semaphore instead of holding the main queue hostage (see
+            // ios_bridge_notify_window_created in ios_bridge.m), so it's
+            // safe to schedule an ordinary async retry here instead of
+            // nesting a run-loop poll inside someone else's GCD block.
+            retryAttachControlsOverlay(to: sdlWindow, attemptsRemaining: 100)
             return
         }
 
+        attachOverlay(to: rootView)
+    }
+
+    /// Retries attaching the controls overlay once SDL's root view exists,
+    /// using a plain async re-dispatch (not a nested RunLoop poll — see the
+    /// comment in attachControlsOverlay above for why that was unsafe).
+    /// Each attempt is scheduled 10ms apart, giving up after ~1s (100
+    /// attempts) if SDL's root view never shows up, same bound as before.
+    private func retryAttachControlsOverlay(to sdlWindow: UIWindow, attemptsRemaining: Int) {
+        guard controlsOverlay == nil else { return } // already attached
+        guard let rootView = sdlWindow.rootViewController?.view ?? sdlWindow.subviews.first else {
+            guard attemptsRemaining > 0 else {
+                // Gave up — proceed without the overlay rather than retry
+                // forever. The game will still run; touch controls just
+                // won't appear.
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+                self?.retryAttachControlsOverlay(to: sdlWindow, attemptsRemaining: attemptsRemaining - 1)
+            }
+            return
+        }
         attachOverlay(to: rootView)
     }
 
