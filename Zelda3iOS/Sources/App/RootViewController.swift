@@ -49,7 +49,24 @@ final class RootViewController: UIViewController {
             if let swiftCrashLog {
                 combined += "=== Swift crash/exception log ===\n\(swiftCrashLog)"
             }
-            showCrashLog(combined)
+            // IMPORTANT: don't call present(_:animated:) synchronously from
+            // viewDidLoad. At this point in the launch sequence (called
+            // from AppDelegate during window.makeKeyAndVisible(), before
+            // didFinishLaunchingWithOptions has returned) UIKit hasn't
+            // necessarily finished wiring this view controller into the
+            // window hierarchy well enough to actually present a modal —
+            // present() can silently no-op instead of either showing the
+            // alert or erroring. The result: view.backgroundColor = .black
+            // (set above) is the last thing that visibly happens, the
+            // alert never appears, showAppropriateScreen() never runs, and
+            // the app just sits on a black screen indefinitely — not a
+            // crash, so nothing further ever gets appended to
+            // checkpoint.log either. Deferring to the next run loop tick
+            // (DispatchQueue.main.async) ensures the window/view hierarchy
+            // is fully settled before we try to present anything.
+            DispatchQueue.main.async { [weak self] in
+                self?.showCrashLog(combined)
+            }
             return
         }
 
