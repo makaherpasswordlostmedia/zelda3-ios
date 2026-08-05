@@ -43,6 +43,16 @@ targets:
           # also compiled individually elsewhere in this source tree, so
           # including this file too causes duplicate-symbol link errors.
           - "third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c"
+    resources:
+      # Resources/Info.plist is consumed separately below via `info.path`,
+      # not copied as a bundle resource, so it's excluded here. Everything
+      # else in Resources/ (e.g. zelda3_assets.bps) gets copied into the
+      # app bundle's root — this was previously missing entirely, which is
+      # why a .bps dropped into this folder never actually made it into
+      # built .ipa and the engine crashed on launch unable to find it.
+      - path: Resources
+        excludes:
+          - "Info.plist"
     dependencies:
       - package: SwiftSDL2
         product: SDL
