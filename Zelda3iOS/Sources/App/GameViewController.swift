@@ -216,18 +216,32 @@ final class GameViewController: UIViewController {
         // zelda3_assets.dat on first run.
         Self.earlyCheckpoint("GameViewController: launchEngine, before background dispatch")
         DispatchQueue.global(qos: .userInitiated).async {
-            Self.earlyCheckpoint("GameViewController: on background thread, before ios_bridge_run_game")
             // SDL_main (src/main.c) does `argc--, argv++` right at the
-            // start — the standard "skip argv[0] (program name)" idiom. It
-            // expects argv[0] to be the program name and any real
-            // arguments to start at argv[1]. Passing argc=1 with only one
-            // element made argc become 0 after that decrement, which then
-            // failed main.c's `if (argc >= 1) LoadRom(argv[0])` guard — the
-            // ROM was silently never loaded. Pass a dummy second argument
-            // so argc=2, and argv+1 still points at a valid (empty) string
-            // after the shift.
+            // start — the standard "skip argv[0] (program name)" idiom. So
+            // after that shift, what THIS code passes as the *second*
+            // array element becomes SDL_main's argv[0], and
+            // `if (argc >= 1) LoadRom(argv[0])` reads that as the ROM
+            // filename. Previously this second element was an empty
+            // string ("") — a leftover placeholder meant only to keep
+            // argc at 2 so the shift didn't zero it out (see the old
+            // comment this replaced), but never actually updated to be an
+            // real filename. That made every launch call
+            // LoadRom("") -> fopen("", "rb"), which is undefined behavior
+            // in the C standard (glibc/darwin's libc don't guarantee
+            // fopen("") cleanly returns NULL) instead of a clean, catchable
+            // "file not found" — manifesting as exactly the kind of
+            // silent hang/crash-with-no-log symptom seen on device, right
+            // after the "before LoadRom" checkpoint and before "after
+            // LoadRom" ever gets written.
+            //
+            // Fix: pass the actual ROM filename ("zelda3.sfc", relative to
+            // the Documents directory this process already chdir'd into
+            // via ios_bridge_setup_documents_cwd() in AppDelegate) as
+            // argv[1], so after SDL_main's shift it lands in argv[0] where
+            // LoadRom() expects it.
+            Self.earlyCheckpoint("GameViewController: on background thread, before ios_bridge_run_game")
             let argv0 = strdup("zelda3")
-            let argv1 = strdup("")
+            let argv1 = strdup("zelda3.sfc")
             var argvArray: [UnsafeMutablePointer<CChar>?] = [argv0, argv1, nil]
             _ = argvArray.withUnsafeMutableBufferPointer { buffer -> Int32 in
                 ios_bridge_run_game(2, buffer.baseAddress)
