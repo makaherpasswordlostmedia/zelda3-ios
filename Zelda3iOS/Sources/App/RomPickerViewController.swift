@@ -1,5 +1,6 @@
 import UIKit
 import UniformTypeIdentifiers
+import Darwin
 
 /// Screen shown when no ROM/assets have been imported yet. Lets the user
 /// pick their own legally-dumped `zelda3.sfc` file from the Files app
@@ -15,10 +16,28 @@ final class RomPickerViewController: UIViewController {
     private let statusLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
 
+    /// Same rationale as GameViewController/RootViewController — raw POSIX
+    /// write so this doesn't depend on any other part of the app having
+    /// run successfully, and can't itself throw an uncaught NSException.
+    private static func earlyCheckpoint(_ stage: String) {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let path = docs.appendingPathComponent("checkpoint.log").path
+        let fd = path.withCString { open($0, O_WRONLY | O_CREAT | O_APPEND, 0o644) }
+        guard fd >= 0 else { return }
+        let line = stage + "\n"
+        _ = line.withCString { write(fd, $0, strlen($0)) }
+        close(fd)
+    }
+
     override func viewDidLoad() {
+        Self.earlyCheckpoint("RomPickerViewController: viewDidLoad - before super")
         super.viewDidLoad()
+        Self.earlyCheckpoint("RomPickerViewController: viewDidLoad - super done")
         view.backgroundColor = .systemBackground
         layoutUI()
+        Self.earlyCheckpoint("RomPickerViewController: viewDidLoad - layoutUI done, returning")
     }
 
     private func layoutUI() {

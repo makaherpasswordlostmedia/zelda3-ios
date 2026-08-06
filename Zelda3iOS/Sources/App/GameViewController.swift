@@ -44,6 +44,7 @@ final class GameViewController: UIViewController {
     }
 
     override func viewDidLoad() {
+        Self.earlyCheckpoint("GameViewController: viewDidLoad - before super")
         super.viewDidLoad()
         Self.earlyCheckpoint("GameViewController: viewDidLoad")
         view.backgroundColor = .black
@@ -53,10 +54,12 @@ final class GameViewController: UIViewController {
         statusLabel.textAlignment = .center
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusLabel)
+        Self.earlyCheckpoint("GameViewController: viewDidLoad - statusLabel added, activating constraints")
         NSLayoutConstraint.activate([
             statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
+        Self.earlyCheckpoint("GameViewController: viewDidLoad - constraints activated, returning")
     }
 
     override func viewDidAppear(_ animated: Bool) {

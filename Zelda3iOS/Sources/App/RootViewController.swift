@@ -40,6 +40,7 @@ final class RootViewController: UIViewController {
         // Now it's safe to start this run's own trail.
         Self.earlyCheckpoint("RootViewController: viewDidLoad start")
         view.backgroundColor = .black
+        Self.earlyCheckpoint("RootViewController: after consuming previous logs, backgroundColor set. swiftCrashLog=\(swiftCrashLog != nil) checkpointLog=\(checkpointLog != nil)")
 
         if swiftCrashLog != nil || checkpointLog != nil {
             var combined = ""
@@ -111,11 +112,15 @@ final class RootViewController: UIViewController {
     }
 
     private func showAppropriateScreen(animated: Bool) {
-        if ios_bridge_has_rom_or_assets() != 0 {
+        Self.earlyCheckpoint("RootViewController: showAppropriateScreen entry")
+        let hasRomOrAssets = ios_bridge_has_rom_or_assets() != 0
+        Self.earlyCheckpoint("RootViewController: ios_bridge_has_rom_or_assets returned \(hasRomOrAssets)")
+        if hasRomOrAssets {
             presentGame()
         } else {
             presentRomPicker(animated: animated)
         }
+        Self.earlyCheckpoint("RootViewController: showAppropriateScreen returned")
     }
 
     private func presentRomPicker(animated: Bool) {
@@ -129,21 +134,34 @@ final class RootViewController: UIViewController {
     }
 
     private func presentGame() {
-        guard !(children.first is GameViewController) else { return }
+        Self.earlyCheckpoint("RootViewController: presentGame entry")
+        guard !(children.first is GameViewController) else {
+            Self.earlyCheckpoint("RootViewController: presentGame - GameViewController already present, skipping")
+            return
+        }
+        Self.earlyCheckpoint("RootViewController: presentGame - about to init GameViewController")
         let gameVC = GameViewController()
+        Self.earlyCheckpoint("RootViewController: presentGame - GameViewController init done, about to addChildScreen")
         addChildScreen(gameVC, animated: true)
+        Self.earlyCheckpoint("RootViewController: presentGame - addChildScreen returned")
     }
 
     private func addChildScreen(_ child: UIViewController, animated: Bool) {
+        Self.earlyCheckpoint("RootViewController: addChildScreen entry, \(children.count) existing children")
         for existing in children {
             existing.willMove(toParent: nil)
             existing.view.removeFromSuperview()
             existing.removeFromParent()
         }
+        Self.earlyCheckpoint("RootViewController: addChildScreen - existing children removed, calling addChild")
         addChild(child)
+        Self.earlyCheckpoint("RootViewController: addChildScreen - addChild done, about to access child.view (triggers loadView)")
         child.view.frame = view.bounds
+        Self.earlyCheckpoint("RootViewController: addChildScreen - child.view accessed OK, frame set")
         child.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(child.view)
+        Self.earlyCheckpoint("RootViewController: addChildScreen - addSubview done, calling didMove")
         child.didMove(toParent: self)
+        Self.earlyCheckpoint("RootViewController: addChildScreen - didMove done, returning")
     }
 }
