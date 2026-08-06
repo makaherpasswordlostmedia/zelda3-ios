@@ -46,76 +46,59 @@ final class TouchControlsView: UIView {
         }
     }
 
-    // D-pad is a single view handling its own multi-directional touch
-    // (so diagonals work) rather than four separate button hitboxes.
-    private final class DPadView: UIView {
-        private var activeDirections: Set<IosButton> = []
+    private let dPad = DPadCross()
+
+    /// Cross-shaped D-pad made of four separate arrow buttons (Up/Down/
+    /// Left/Right) instead of a single circular hit-area with angle-based
+    /// direction detection. Each arrow is a normal GameButton, so presses
+    /// are unambiguous — you're either touching the up arrow or you're
+    /// not, no angle math involved. Diagonals still work: this container
+    /// itself doesn't do any touch handling, it just lays out four
+    /// buttons; each button tracks its own touch independently, and since
+    /// isMultipleTouchEnabled is true on the whole overlay, holding two
+    /// adjacent arrows at once (e.g. up + right) presses both underlying
+    /// SNES directions simultaneously, same as a real D-pad diagonal.
+    private final class DPadCross: UIView {
+        let up = GameButton(title: "▲", iosButton: .up)
+        let down = GameButton(title: "▼", iosButton: .down)
+        let left = GameButton(title: "◀", iosButton: .left)
+        let right = GameButton(title: "▶", iosButton: .right)
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            backgroundColor = UIColor.white.withAlphaComponent(0.12)
-            layer.borderColor = UIColor.white.withAlphaComponent(0.6).cgColor
-            layer.borderWidth = 1
-            isMultipleTouchEnabled = false // one finger drives the dpad
+            for btn in [up, down, left, right] {
+                addSubview(btn)
+                btn.translatesAutoresizingMaskIntoConstraints = false
+                btn.layer.cornerRadius = 8
+            }
+            let btnSize: CGFloat = 52
+            NSLayoutConstraint.activate([
+                up.widthAnchor.constraint(equalToConstant: btnSize),
+                up.heightAnchor.constraint(equalToConstant: btnSize),
+                up.centerXAnchor.constraint(equalTo: centerXAnchor),
+                up.topAnchor.constraint(equalTo: topAnchor),
+
+                down.widthAnchor.constraint(equalToConstant: btnSize),
+                down.heightAnchor.constraint(equalToConstant: btnSize),
+                down.centerXAnchor.constraint(equalTo: centerXAnchor),
+                down.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+                left.widthAnchor.constraint(equalToConstant: btnSize),
+                left.heightAnchor.constraint(equalToConstant: btnSize),
+                left.leadingAnchor.constraint(equalTo: leadingAnchor),
+                left.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+                right.widthAnchor.constraint(equalToConstant: btnSize),
+                right.heightAnchor.constraint(equalToConstant: btnSize),
+                right.trailingAnchor.constraint(equalTo: trailingAnchor),
+                right.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
         }
 
         required init?(coder: NSCoder) { fatalError("not supported") }
 
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            layer.cornerRadius = min(bounds.width, bounds.height) / 2
-        }
-
-        private func directions(for point: CGPoint) -> Set<IosButton> {
-            let center = CGPoint(x: bounds.midX, y: bounds.midY)
-            let dx = point.x - center.x
-            let dy = point.y - center.y
-            let deadzone: CGFloat = 12
-            guard abs(dx) > deadzone || abs(dy) > deadzone else { return [] }
-
-            let angle = atan2(dy, dx) // radians, 0 = right, +down
-            let octant = Int((angle / (.pi / 4)).rounded()) & 7
-            // 0=right,1=down-right,2=down,3=down-left,4=left,5=up-left,6=up,7=up-right
-            switch octant {
-            case 0: return [.right]
-            case 1: return [.right, .down]
-            case 2: return [.down]
-            case 3: return [.down, .left]
-            case 4: return [.left]
-            case 5: return [.left, .up]
-            case 6: return [.up]
-            case 7: return [.up, .right]
-            default: return []
-            }
-        }
-
-        private func applyDirections(_ new: Set<IosButton>) {
-            for removed in activeDirections.subtracting(new) {
-                ios_bridge_set_button(removed, 0)
-            }
-            for added in new.subtracting(activeDirections) {
-                ios_bridge_set_button(added, 1)
-            }
-            activeDirections = new
-        }
-
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            guard let t = touches.first else { return }
-            applyDirections(directions(for: t.location(in: self)))
-        }
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-            guard let t = touches.first else { return }
-            applyDirections(directions(for: t.location(in: self)))
-        }
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            applyDirections([])
-        }
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            applyDirections([])
-        }
+        var allButtons: [GameButton] { [up, down, left, right] }
     }
-
-    private let dPad = DPadView()
     private var buttons: [GameButton] = []
 
     override init(frame: CGRect) {
@@ -139,11 +122,19 @@ final class TouchControlsView: UIView {
         let start = GameButton(title: "Start", iosButton: .start)
         let select = GameButton(title: "Select", iosButton: .select)
 
-        buttons = [a, b, x, y, l, r, start, select]
-        for btn in buttons {
+        let regularButtons = [a, b, x, y, l, r, start, select]
+        for btn in regularButtons {
             addSubview(btn)
             btn.translatesAutoresizingMaskIntoConstraints = false
         }
+        // D-pad arrows are already subviews of dPad (added in DPadCross's
+        // own init) — do NOT addSubview them here too, since UIView's
+        // addSubview reparents a view that already has a superview,
+        // which would rip them out of dPad and break the constraints
+        // pinning them to dPad's own edges/center. Just fold them into
+        // the shared `buttons` list so the touch-handling logic below
+        // treats them the same as every other button.
+        buttons = regularButtons + dPad.allButtons
 
         let dPadSize: CGFloat = 140
         let btnSize: CGFloat = 56
@@ -209,7 +200,7 @@ final class TouchControlsView: UIView {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
-            if let btn = buttons.first(where: { $0.frame.contains(touch.location(in: self)) }) {
+            if let btn = button(at: touch.location(in: self)) {
                 btn.setPressed(true)
             }
         }
@@ -220,7 +211,8 @@ final class TouchControlsView: UIView {
         // button on drag-over — keeps behavior predictable, like a real pad.
         for touch in touches {
             let loc = touch.location(in: self)
-            for btn in buttons where btn.isPressed && !btn.frame.contains(loc) {
+            let stillOn = button(at: loc)
+            for btn in buttons where btn.isPressed && btn !== stillOn {
                 btn.setPressed(false)
             }
         }
@@ -236,17 +228,34 @@ final class TouchControlsView: UIView {
 
     private func releaseButtons(for touches: Set<UITouch>) {
         for touch in touches {
-            let loc = touch.location(in: self)
-            if let btn = buttons.first(where: { $0.frame.contains(loc) }) {
-                btn.setPressed(false)
-            }
+            button(at: touch.location(in: self))?.setPressed(false)
+        }
+    }
+
+    /// Finds which button (if any) contains the given point, expressed in
+    /// this view's own coordinate space. Uses convert(_:to:) per button
+    /// rather than comparing against btn.frame directly, since not every
+    /// button is a direct subview of this view anymore — the D-pad arrows
+    /// are nested one level deeper inside DPadCross, so their .frame is in
+    /// DPadCross's coordinate space, not this view's.
+    private func button(at point: CGPoint) -> GameButton? {
+        buttons.first { btn in
+            guard let superview = btn.superview else { return false }
+            let localPoint = superview.convert(point, from: self)
+            return btn.frame.contains(localPoint)
         }
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        // Always return self so this view handles all touches directly via
-        // touchesBegan/Moved/Ended above, rather than relying on subviews'
-        // own hit-testing chain — simpler and more reliable for a pad.
+        // The D-pad is now four plain GameButton arrows (up/down/left/
+        // right), included directly in `buttons` below alongside
+        // A/B/X/Y/L/R/Start/Select. touchesBegan/Moved/Ended already
+        // handle that whole list uniformly (see `button(at:)` above), so —
+        // unlike the old circular D-pad, which needed its own
+        // touch-tracking subview and therefore had to be routed to
+        // specially here — no special-casing is needed anymore. This view
+        // just claims every touch within its own bounds and dispatches to
+        // the right button itself.
         return bounds.contains(point) ? self : nil
     }
 }
