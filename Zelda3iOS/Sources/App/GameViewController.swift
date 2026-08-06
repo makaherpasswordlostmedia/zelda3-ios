@@ -202,6 +202,37 @@ final class GameViewController: UIViewController {
         rootView.bringSubviewToFront(overlay)
 
         controlsOverlay = overlay
+
+        // IMPORTANT: this notification (ios_bridge_notify_window_created,
+        // which is what leads here) fires BEFORE g_renderer_funcs
+        // .Initialize() in main.c — i.e. before SDL_CreateRenderer runs.
+        // SDL's iOS renderer backend creates its own UIView (an OpenGL ES
+        // or Metal-backed view) and adds it as a subview of this same
+        // rootView *after* this point, which — being added later — lands
+        // on top of the overlay in z-order regardless of the
+        // bringSubviewToFront call just above. That's why the controls
+        // were visible for an instant (before SDL's render view existed)
+        // and then covered up a moment later (once it did).
+        //
+        // Rather than trying to hook the exact moment SDL adds its view
+        // from the C side, keep re-asserting the overlay on top for the
+        // first couple of seconds after attach, which reliably outlasts
+        // SDL_CreateRenderer's setup on every device regardless of how
+        // long that setup takes.
+        keepOverlayOnTop(overlay, in: rootView, attemptsRemaining: 40)
+    }
+
+    /// Re-applies bringSubviewToFront every 50ms for ~2s after the overlay
+    /// is first attached, so it stays visible above whatever view SDL's
+    /// renderer backend adds afterwards. See the comment in attachOverlay
+    /// above for why this is necessary instead of a one-shot call.
+    private func keepOverlayOnTop(_ overlay: TouchControlsView, in rootView: UIView, attemptsRemaining: Int) {
+        guard attemptsRemaining > 0, overlay.superview === rootView else { return }
+        rootView.bringSubviewToFront(overlay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak overlay, weak rootView] in
+            guard let self, let overlay, let rootView else { return }
+            self.keepOverlayOnTop(overlay, in: rootView, attemptsRemaining: attemptsRemaining - 1)
+        }
     }
 
     // MARK: - Engine launch
