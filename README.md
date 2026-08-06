@@ -1,3 +1,7 @@
+# Zelda3iOS 
+Game ported to iOS 14.7+
+Chat in tg: t.me/touchhlechat
+
 # Zelda3
 A reimplementation of Zelda 3.
 
