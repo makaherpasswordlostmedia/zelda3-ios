@@ -122,104 +122,58 @@ final class GameViewController: UIViewController {
 
     private func attachControlsOverlay(to sdlWindow: UIWindow) {
         guard controlsOverlay == nil else { return } // already attached
-
-        guard let rootView = sdlWindow.rootViewController?.view ?? sdlWindow.subviews.first else {
-            // SDL's window exists but hasn't got a root view yet — retry
-            // shortly. Can happen if we're notified a hair before SDL
-            // finishes setting up its own root view.
-            //
-            // This used to busy-poll with RunLoop.current.run(until:) in a
-            // loop, on the theory that the C side called this callback via
-            // dispatch_sync, so the engine's background thread would block
-            // until attach finished, and pumping the run loop here would
-            // safely let other pending main-thread work (like the rest of
-            // SDL_CreateWindow's continuation) complete in the meantime.
-            //
-            // That combination was unsafe in practice: a RunLoop.current
-            // .run() called from *inside* a block GCD is currently
-            // executing on the main thread doesn't reliably pump the same
-            // sources that other queued main-thread work depends on — and
-            // that other work could itself be blocked waiting for the very
-            // dispatch_sync this call was nested inside of. The two threads
-            // could end up circularly waiting on each other, which iOS's
-            // launch watchdog resolves by SIGKILLing the process outright —
-            // before any crash handler, checkpoint write, or alert ever
-            // gets a chance to run. That produced exactly the "controls
-            // flash for an instant, then the app just vanishes, nothing in
-            // any log" symptom.
-            //
-            // Fix: the C side now calls this via dispatch_async and waits
-            // on a semaphore instead of holding the main queue hostage (see
-            // ios_bridge_notify_window_created in ios_bridge.m), so it's
-            // safe to schedule an ordinary async retry here instead of
-            // nesting a run-loop poll inside someone else's GCD block.
-            retryAttachControlsOverlay(to: sdlWindow, attemptsRemaining: 100)
-            return
-        }
-
-        attachOverlay(to: rootView)
+        // Attaching directly to the UIWindow (see attachOverlay below for
+        // why), which SDL_CreateWindow has already fully created by the
+        // time this callback fires — no need to wait for a root view to
+        // exist first, unlike the old rootView-based approach.
+        attachOverlay(to: sdlWindow)
     }
 
-    /// Retries attaching the controls overlay once SDL's root view exists,
-    /// using a plain async re-dispatch (not a nested RunLoop poll — see the
-    /// comment in attachControlsOverlay above for why that was unsafe).
-    /// Each attempt is scheduled 10ms apart, giving up after ~1s (100
-    /// attempts) if SDL's root view never shows up, same bound as before.
-    private func retryAttachControlsOverlay(to sdlWindow: UIWindow, attemptsRemaining: Int) {
-        guard controlsOverlay == nil else { return } // already attached
-        guard let rootView = sdlWindow.rootViewController?.view ?? sdlWindow.subviews.first else {
-            guard attemptsRemaining > 0 else {
-                // Gave up — proceed without the overlay rather than retry
-                // forever. The game will still run; touch controls just
-                // won't appear.
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
-                self?.retryAttachControlsOverlay(to: sdlWindow, attemptsRemaining: attemptsRemaining - 1)
-            }
-            return
-        }
-        attachOverlay(to: rootView)
-    }
-
-    private func attachOverlay(to rootView: UIView) {
+    private func attachOverlay(to sdlWindow: UIWindow) {
         statusLabel.removeFromSuperview()
 
         let overlay = TouchControlsView()
         overlay.translatesAutoresizingMaskIntoConstraints = false
         overlay.backgroundColor = .clear
         overlay.isOpaque = false
-        rootView.addSubview(overlay)
+
+        // IMPORTANT: attach directly to the UIWindow, not to
+        // sdlWindow.rootViewController.view. Earlier versions attached to
+        // that view controller's `.view`, captured once at this moment —
+        // but SDL2's iOS renderer backend (SDL_CreateRenderer, called
+        // shortly after this from main.c) is free to replace its view
+        // controller's `.view` wholesale when it sets up its OpenGL
+        // ES/Metal-backed render view, rather than only adding a subview
+        // to the existing one. When that happens, the old view (with our
+        // overlay still attached to it as a subview) is detached from the
+        // window entirely and simply stops being displayed — which is
+        // exactly the "flashes for an instant, then disappears" symptom:
+        // bringSubviewToFront (even called repeatedly afterwards, as a
+        // previous fix attempted) can't help, because the overlay isn't
+        // missing from the front of the stack, it's sitting in a view
+        // hierarchy that isn't part of the window's displayed content at
+        // all anymore.
+        //
+        // The UIWindow itself is not replaced the same way — SDL creates
+        // exactly one UIWindow per SDL_CreateWindow call and keeps using
+        // it — so adding directly to the window, above its normal content
+        // (via windowLevel), survives any number of times SDL swaps out
+        // its root view controller's view underneath us.
+        sdlWindow.addSubview(overlay)
         NSLayoutConstraint.activate([
-            overlay.topAnchor.constraint(equalTo: rootView.topAnchor),
-            overlay.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            overlay.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: sdlWindow.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: sdlWindow.bottomAnchor),
+            overlay.leadingAnchor.constraint(equalTo: sdlWindow.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: sdlWindow.trailingAnchor),
         ])
-        // Belt-and-suspenders: if some other SDL-owned subview gets added
-        // to rootView after this and would otherwise occlude us, keep the
-        // overlay topmost in the subview stack.
-        rootView.bringSubviewToFront(overlay)
+        sdlWindow.bringSubviewToFront(overlay)
 
         controlsOverlay = overlay
 
-        // IMPORTANT: this notification (ios_bridge_notify_window_created,
-        // which is what leads here) fires BEFORE g_renderer_funcs
-        // .Initialize() in main.c — i.e. before SDL_CreateRenderer runs.
-        // SDL's iOS renderer backend creates its own UIView (an OpenGL ES
-        // or Metal-backed view) and adds it as a subview of this same
-        // rootView *after* this point, which — being added later — lands
-        // on top of the overlay in z-order regardless of the
-        // bringSubviewToFront call just above. That's why the controls
-        // were visible for an instant (before SDL's render view existed)
-        // and then covered up a moment later (once it did).
-        //
-        // Rather than trying to hook the exact moment SDL adds its view
-        // from the C side, keep re-asserting the overlay on top for the
-        // first couple of seconds after attach, which reliably outlasts
-        // SDL_CreateRenderer's setup on every device regardless of how
-        // long that setup takes.
-        keepOverlayOnTop(overlay, in: rootView, attemptsRemaining: 40)
+        // Belt-and-suspenders, cheap to keep: still re-assert top-of-stack
+        // for a couple of seconds in case something else also adds a
+        // sibling subview directly to the window itself.
+        keepOverlayOnTop(overlay, in: sdlWindow, attemptsRemaining: 40)
     }
 
     /// Re-applies bringSubviewToFront every 50ms for ~2s after the overlay
