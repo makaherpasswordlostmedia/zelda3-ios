@@ -24,7 +24,12 @@
 
 // Die() in the engine calls this from whatever thread hit the fatal error
 // (usually the game thread). UIKit calls must be hopped to the main thread.
-static __weak GameViewController *g_currentVC;
+// __weak on a file-scope global is not supported under the legacy
+// (fragile) Objective-C runtime that armv7 always uses -- only the modern
+// runtime (arm64/x86_64) supports weak references to non-instance-variable
+// storage. Use __unsafe_unretained instead and clear it in -dealloc so we
+// never dereference a dangling pointer.
+static __unsafe_unretained GameViewController *g_currentVC;
 static void FatalHandler(const char *message) {
   NSString *msg = [NSString stringWithUTF8String:message];
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -35,6 +40,12 @@ static void FatalHandler(const char *message) {
 - (void)viewDidAppear:(BOOL)animated {
   [super viewDidAppear:animated];
   g_currentVC = self;
+}
+
+- (void)dealloc {
+  if (g_currentVC == self) {
+    g_currentVC = nil;
+  }
 }
 
 - (NSString *)documentsDir {
