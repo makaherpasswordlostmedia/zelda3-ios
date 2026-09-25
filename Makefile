@@ -18,6 +18,7 @@ APPLICATION_NAME = Zelda3ARMv7
 # since Theos (like the gnustep-make it is built on) does not expose separate
 # CFLAGS/OBJCFLAGS variables that route to .c vs .m independently.
 Zelda3ARMv7_CFLAGS = -O2 -std=gnu11 -I$(THEOS_PROJECT_DIR)/Zelda3/Engine -I$(THEOS_PROJECT_DIR)/Zelda3/Platform \
+	-I$(THEOS_PROJECT_DIR)/third_party/opus-1.3.1-stripped \
 	-Wno-deprecated-declarations -Wno-unknown-warning-option \
 	-Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map \
 	-Wno-error=nullability-completeness -Wno-nullability-completeness \
@@ -66,6 +67,7 @@ Zelda3ARMv7_FILES = \
 	Zelda3/Engine/snes/spc.c \
 	Zelda3/Engine/snes/tracing.c \
 	Zelda3/Engine/keyname.c \
+	third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c \
 	Zelda3/Platform/bus_stubs.c \
 	Zelda3/Platform/Z3Runtime.m \
 	Zelda3/Platform/Z3View.m \
