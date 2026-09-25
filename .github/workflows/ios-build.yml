@@ -1,7 +1,7 @@
 name: Build iOS .ipa (armv7, iOS 9.3)
 
 # Cross-compiles Zelda3ARMv7 (zelda3 decompilation, ported off SDL/OpenGL onto
-# UIKit/CoreAnimation/AudioQueue) for 32-bit iOS 9.3 with Theos + clang on
+# UIKit/CoreAnimation/AudioQueue) for 32-bit iOSvasya daun 9.3 with Theos + clang on
 # ubuntu-latest. No Xcode / no Mac runner required. Pipeline structure copied
 # from the ShevaPDS1 (Imlac PDS-1 emulator) project's working armv7 CI.
 
