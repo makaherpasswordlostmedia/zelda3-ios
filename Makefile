@@ -26,6 +26,9 @@ Zelda3ARMv7_CFLAGS = -O2 -std=gnu11 -I$(THEOS_PROJECT_DIR)/Zelda3/Engine -I$(THE
 	-Wno-error=non-modular-include-in-framework-module \
 	-Wno-non-modular-include-in-framework-module \
 	-Wno-error=non-modular-include-in-module -Wno-non-modular-include-in-module \
+	-Wno-error=bitwise-op-parentheses -Wno-bitwise-op-parentheses \
+	-Wno-error=logical-op-parentheses -Wno-logical-op-parentheses \
+	-Wno-error=parentheses -Wno-parentheses \
 	-mno-unaligned-access
 
 Zelda3ARMv7_FILES = \
