@@ -94,6 +94,13 @@ Zelda3/App/AppDelegate.m_FILE_FLAGS = -fobjc-arc
 Zelda3/App/GameViewController.m_FILE_FLAGS = -fobjc-arc
 Zelda3/App/TouchButton.m_FILE_FLAGS = -fobjc-arc
 
+# Third-party (unmodified libopus, stripped-decoder build): the amalgam
+# includes an internal encoder-side stub (ec_encode_bin) and a helper
+# (smooth_fade) that this decoder-only configuration never calls. That's
+# upstream's code shape, not ours to edit, so silence just this warning
+# for just this file rather than patching vendored source.
+third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c_FILE_FLAGS = -Wno-error=unused-function -Wno-unused-function
+
 Zelda3ARMv7_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox AVFoundation
 Zelda3ARMv7_CODESIGN_FLAGS = -Sentitlements.plist
 
