@@ -16,6 +16,13 @@
 #import <QuartzCore/QuartzCore.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
+
+// GL_UNPACK_ROW_LENGTH doesn't exist in ES2 core; it's exposed via the
+// GL_EXT_unpack_subimage extension as GL_UNPACK_ROW_LENGTH_EXT (same enum
+// value as desktop GL / ES3's GL_UNPACK_ROW_LENGTH: 0x0CF2).
+#ifndef GL_UNPACK_ROW_LENGTH_EXT
+#define GL_UNPACK_ROW_LENGTH_EXT 0x0CF2
+#endif
 #include "Z3Runtime.h"
 
 @implementation Z3View {
@@ -66,6 +73,7 @@
 - (void)dealloc {
   [self stop];
   [self teardownGL];
+  [super dealloc];
 }
 
 #pragma mark - GL setup
@@ -201,7 +209,7 @@ static GLuint CompileShader(GLenum type, const char *src) {
   // its real pitch, in pixels, without a packing copy first -- pitch is
   // documented as bytes/row and every row in this engine is 4-byte BGRA, so
   // pitch/4 is exact.
-  glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(f->pitch / 4));
+  glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, (GLint)(f->pitch / 4));
 
   if (f->width != _texW || f->height != _texH) {
     // Only grows/reallocates on a real geometry change (e.g. extended
@@ -215,7 +223,7 @@ static GLuint CompileShader(GLenum type, const char *src) {
                      GL_RGBA, GL_UNSIGNED_BYTE, f->pixels);
   }
 
-  glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+  glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
 
   if (f->width != _gameW || f->height != _gameH) {
     _gameW = f->width;
