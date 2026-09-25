@@ -29,6 +29,9 @@ Zelda3ARMv7_CFLAGS = -O2 -std=gnu11 -I$(THEOS_PROJECT_DIR)/Zelda3/Engine -I$(THE
 	-Wno-error=bitwise-op-parentheses -Wno-bitwise-op-parentheses \
 	-Wno-error=logical-op-parentheses -Wno-logical-op-parentheses \
 	-Wno-error=parentheses -Wno-parentheses \
+	-Wno-error=unused-variable -Wno-unused-variable \
+	-Wno-error=unused-but-set-variable -Wno-unused-but-set-variable \
+	-Wno-error=deprecated-non-prototype -Wno-deprecated-non-prototype \
 	-mno-unaligned-access
 
 Zelda3ARMv7_FILES = \
