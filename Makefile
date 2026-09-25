@@ -1,38 +1,92 @@
-TARGET_EXEC:=zelda3
-ROM:=tables/zelda3.sfc
-SRCS:=$(wildcard src/*.c snes/*.c) third_party/gl_core/gl_core_3_1.c third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c
-OBJS:=$(SRCS:%.c=%.o)
-PYTHON:=/usr/bin/env python3
-CFLAGS:=$(if $(CFLAGS),$(CFLAGS),-O2 -Werror) -I .
-CFLAGS:=${CFLAGS} $(shell sdl2-config --cflags) -DSYSTEM_VOLUME_MIXER_AVAILABLE=0
+# Zelda3 (armv7 / iOS 9.3) — Theos application
+# Built with the iPhoneOS 9.3 SDK, deployment target 9.3 (matches ShevaPDS's
+# proven toolchain setup; MinimumOSVersion is also 9.3 in Resources/Info.plist
+# since this port targets exactly that OS, unlike ShevaPDS's wider 7.0 range).
+TARGET := iphone:clang:9.3:9.3
+ARCHS = armv7
 
-ifeq (${OS},Windows_NT)
-    WINDRES:=windres
-    RES:=zelda3.res
-    SDLFLAGS:=-Wl,-Bstatic $(shell sdl2-config --static-libs)
-else
-    SDLFLAGS:=$(shell sdl2-config --libs) -lm
-endif
+# Same clang-19-vs-old-SDK-modulemap workaround as ShevaPDS.
+export ADDITIONAL_OBJCFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map
 
-.PHONY: all clean clean_obj clean_gen
+include $(THEOS)/makefiles/common.mk
 
-all: $(TARGET_EXEC) zelda3_assets.dat
-$(TARGET_EXEC): $(OBJS) $(RES)
-	$(CC) $^ -o $@ $(LDFLAGS) $(SDLFLAGS)
-%.o : %.c
-	$(CC) -c $(CFLAGS) $< -o $@
+APPLICATION_NAME = Zelda3ARMv7
 
-$(RES): src/platform/win32/zelda3.rc
-	@echo "Generating Windows resources"
-	@$(WINDRES) $< -O coff -o $@
+# Baseline applies to both .c and .m: -fobjc-arc/-fno-objc-arc only affect
+# Objective-C translation units, so it is harmless on the plain-C engine files
+# below -- ARC itself is enabled per-file for the .m files via _FILE_FLAGS,
+# since Theos (like the gnustep-make it is built on) does not expose separate
+# CFLAGS/OBJCFLAGS variables that route to .c vs .m independently.
+Zelda3ARMv7_CFLAGS = -O2 -std=gnu11 -I$(THEOS_PROJECT_DIR)/Zelda3/Engine -I$(THEOS_PROJECT_DIR)/Zelda3/Platform \
+	-Wno-deprecated-declarations -Wno-unknown-warning-option \
+	-Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map \
+	-Wno-error=nullability-completeness -Wno-nullability-completeness \
+	-Wno-error=unused-command-line-argument -Wno-unused-command-line-argument \
+	-Wno-error=incomplete-umbrella -Wno-incomplete-umbrella \
+	-Wno-error=non-modular-include-in-framework-module \
+	-Wno-non-modular-include-in-framework-module \
+	-Wno-error=non-modular-include-in-module -Wno-non-modular-include-in-module \
+	-mno-unaligned-access
 
-zelda3_assets.dat:
-	@echo "Extracting game resources"
-	$(PYTHON) assets/restool.py --extract-from-rom
+Zelda3ARMv7_FILES = \
+	Zelda3/Engine/src/ancilla.c \
+	Zelda3/Engine/src/attract.c \
+	Zelda3/Engine/src/audio.c \
+	Zelda3/Engine/src/config.c \
+	Zelda3/Engine/src/dungeon.c \
+	Zelda3/Engine/src/ending.c \
+	Zelda3/Engine/src/hud.c \
+	Zelda3/Engine/src/load_gfx.c \
+	Zelda3/Engine/src/messaging.c \
+	Zelda3/Engine/src/misc.c \
+	Zelda3/Engine/src/nmi.c \
+	Zelda3/Engine/src/overlord.c \
+	Zelda3/Engine/src/overworld.c \
+	Zelda3/Engine/src/player.c \
+	Zelda3/Engine/src/player_oam.c \
+	Zelda3/Engine/src/poly.c \
+	Zelda3/Engine/src/select_file.c \
+	Zelda3/Engine/src/spc_player.c \
+	Zelda3/Engine/src/sprite.c \
+	Zelda3/Engine/src/sprite_main.c \
+	Zelda3/Engine/src/tagalong.c \
+	Zelda3/Engine/src/tile_detect.c \
+	Zelda3/Engine/src/util.c \
+	Zelda3/Engine/src/zelda_rtl.c \
+	Zelda3/Engine/snes/apu.c \
+	Zelda3/Engine/snes/dma.c \
+	Zelda3/Engine/snes/dsp.c \
+	Zelda3/Engine/snes/ppu.c \
+	Zelda3/Engine/snes/spc.c \
+	Zelda3/Engine/snes/tracing.c \
+	Zelda3/Engine/keyname.c \
+	Zelda3/Platform/bus_stubs.c \
+	Zelda3/Platform/Z3Runtime.m \
+	Zelda3/Platform/Z3View.m \
+	Zelda3/Platform/Z3Audio.m \
+	Zelda3/App/AppDelegate.m \
+	Zelda3/App/GameViewController.m \
+	Zelda3/App/TouchButton.m
 
-clean: clean_obj clean_gen
-clean_obj:
-	@$(RM) $(OBJS) $(TARGET_EXEC)
-clean_gen:
-	@$(RM) $(RES) zelda3_assets.dat tables/zelda3_assets.dat tables/*.txt tables/*.png tables/sprites/*.png tables/*.yaml
-	@rm -rf tables/__pycache__ tables/dungeon tables/img tables/overworld tables/sound
+# NOTE: intentionally NOT compiled -- see comments where each is referenced:
+#   Engine/src/main.c, opengl.c, glsl_shader.c   (SDL/GL desktop entry point; replaced by Platform/)
+#   Engine/src/zelda_cpu_infra.c                 (reference 65816 emulator: desktop-only ROM
+#                                                  verification harness, never called at runtime)
+#   Engine/snes/{cpu,snes,cart,input,snes_other}.c (belong to that same reference emulator;
+#                                                  their headers are still included for struct
+#                                                  typedefs used by ppu.h/dma.h -- see bus_stubs.c)
+
+# ARC only for the ObjC platform/app files; the engine core and bus_stubs.c
+# are plain C and unaffected by this flag either way, but being explicit here
+# avoids ever silently ARC-ifying a future .m file added to the engine tree.
+Zelda3/Platform/Z3Runtime.m_FILE_FLAGS = -fobjc-arc
+Zelda3/Platform/Z3View.m_FILE_FLAGS = -fobjc-arc
+Zelda3/Platform/Z3Audio.m_FILE_FLAGS = -fobjc-arc
+Zelda3/App/AppDelegate.m_FILE_FLAGS = -fobjc-arc
+Zelda3/App/GameViewController.m_FILE_FLAGS = -fobjc-arc
+Zelda3/App/TouchButton.m_FILE_FLAGS = -fobjc-arc
+
+Zelda3ARMv7_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox AVFoundation
+Zelda3ARMv7_CODESIGN_FLAGS = -Sentitlements.plist
+
+include $(THEOS_MAKE_PATH)/application.mk

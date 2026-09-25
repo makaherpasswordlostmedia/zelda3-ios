@@ -1,0 +1,9 @@
+Package: org.snesrev.zelda3.armv7
+Name: Zelda3
+Version: 1.0
+Architecture: iphoneos-arm
+Description: The Legend of Zelda: A Link to the Past (zelda3 decompilation), ported to 32-bit iOS 9.3 / armv7
+Maintainer: Zelda3ARMv7
+Author: Zelda3ARMv7
+Section: Applications
+Depends: firmware (>= 9.3)
