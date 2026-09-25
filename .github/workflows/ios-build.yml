@@ -1,0 +1,133 @@
+name: Build iOS .ipa (armv7, iOS 9.3)
+
+# Cross-compiles Zelda3ARMv7 (zelda3 decompilation, ported off SDL/OpenGL onto
+# UIKit/CoreAnimation/AudioQueue) for 32-bit iOS 9.3 with Theos + clang on
+# ubuntu-latest. No Xcode / no Mac runner required. Pipeline structure copied
+# from the ShevaPDS1 (Imlac PDS-1 emulator) project's working armv7 CI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Zelda3/**"
+      - "Resources/**"
+      - "Makefile"
+      - "control"
+      - "entitlements.plist"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Zelda3/**"
+      - "Resources/**"
+      - "Makefile"
+      - "control"
+      - "entitlements.plist"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build-ios-armv7:
+    name: Build (Theos / iOS 9.3 / armv7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Identify commit
+        id: commit-info
+        run: |
+          echo "hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "date=$(git log -1 --format=%cd --date=short)" >> $GITHUB_OUTPUT
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release software-properties-common \
+                                  build-essential perl curl ca-certificates \
+                                  zip unzip xz-utils bzip2 git fakeroot make
+
+      - name: Install Theos + iOS cross toolchain
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          # Theos expects the iOS cross compiler at
+          # $THEOS/toolchain/linux/iphone/bin/clang. Grab the Linux->iOS
+          # toolchain release (bundles clang, ld64, cctools, libtapi, ldid etc.
+          # and supports the legacy 32-bit ARM ABI) -- same release ShevaPDS1 uses.
+          mkdir -p "$THEOS/toolchain/linux/iphone"
+          curl -fsSL \
+            "https://github.com/L1ghtmann/llvm-project/releases/download/main-update_3-eabca92/iOSToolchain-x86_64.tar.xz" \
+            -o /tmp/ios-toolchain.tar.xz
+          tar -xf /tmp/ios-toolchain.tar.xz -C "$THEOS/toolchain"
+          ls "$THEOS/toolchain/linux/iphone/bin" | head -20
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+
+      - name: Install iPhoneOS 9.3 SDK
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          mkdir -p "$THEOS/sdks"
+          # Sn0wCooder/theos-sdks is a community mirror that keeps the
+          # legacy SDKs with armv7 slices alive.
+          curl -fsSL -o /tmp/iphoneos9.3.sdk.tbz2 \
+            "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
+          tar -xjf /tmp/iphoneos9.3.sdk.tbz2 -C "$THEOS/sdks"
+          ls "$THEOS/sdks"
+
+      - name: Fix legacy module maps in SDK (clang 19)
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          # clang 19 rejects the old 'module.map' name (-Wdeprecated-module-dot-map)
+          # and refuses to build the Foundation/UIKit modules. Rename to the
+          # modern name, as the compiler itself suggests.
+          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
+          for fw in "$SDK"/System/Library/Frameworks/*.framework; do
+            if [ -f "$fw/module.map" ]; then
+              mkdir -p "$fw/Modules"
+              mv "$fw/module.map" "$fw/Modules/module.modulemap"
+            fi
+          done
+          find "$SDK/usr/include" -name module.map | while read -r m; do
+            mv "$m" "$(dirname "$m")/module.modulemap"
+          done
+          echo "remaining module.map files:"
+          find "$SDK" -name module.map | wc -l
+
+      - name: Build .deb + .app via Theos
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          FINALPACKAGE: "1"
+        run: |
+          make clean
+          make package FINALPACKAGE=1
+          ls -la packages
+
+      - name: Pack .ipa from staged .app
+        run: |
+          rm -rf ipa_build
+          mkdir -p ipa_build/Payload
+          APP_DIR=".theos/obj/Zelda3ARMv7.app"
+          if [ ! -d "$APP_DIR" ]; then
+            APP_DIR=".theos/obj/armv7/Zelda3ARMv7.app"
+          fi
+          if [ ! -d "$APP_DIR" ]; then
+            APP_DIR="$(find .theos -type d -name 'Zelda3ARMv7.app' | head -n1)"
+          fi
+          echo "Using APP_DIR=$APP_DIR"
+          cp -a "$APP_DIR" ipa_build/Payload/
+          (cd ipa_build && zip -rq ../packages/Zelda3-${{ steps.commit-info.outputs.hash }}-armv7-iOS9.3.ipa Payload)
+          ls -la packages
+
+      - name: Upload .ipa + .deb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zelda3-armv7-iOS9.3-${{ steps.commit-info.outputs.hash }}
+          path: |
+            packages/*.ipa
+            packages/*.deb
+          if-no-files-found: error
+          retention-days: 30
