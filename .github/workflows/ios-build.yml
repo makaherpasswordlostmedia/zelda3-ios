@@ -7,7 +7,7 @@ name: Build iOS .ipa (armv7, iOS 9.3)
 
 on:
   push:
-    branches: [main]
+    branches: [32bit-ios]
     paths:
       - "Zelda3/**"
       - "Resources/**"
