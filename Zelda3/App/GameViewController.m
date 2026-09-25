@@ -42,11 +42,18 @@ static void FatalHandler(const char *message) {
   g_currentVC = self;
 }
 
+// Under ARC, [super dealloc] must never be called explicitly -- ARC inserts
+// it automatically after this method returns. Clang's -Wobjc-missing-super-calls
+// check doesn't know that when it can't see an unconditional super call, hence
+// the explicit push/pop here for this one method only.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wobjc-missing-super-calls"
 - (void)dealloc {
   if (g_currentVC == self) {
     g_currentVC = nil;
   }
 }
+#pragma clang diagnostic pop
 
 - (NSString *)documentsDir {
   return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
