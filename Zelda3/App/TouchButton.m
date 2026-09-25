@@ -1,6 +1,7 @@
 // TouchButton.m
 #import "TouchButton.h"
 #include "Z3Runtime.h"
+#include <stdatomic.h>
 
 // All touch controls OR their bit into this and call Z3Runtime_SetButtons with
 // the combined result -- a single button's -touchesBegan: must not stomp on
