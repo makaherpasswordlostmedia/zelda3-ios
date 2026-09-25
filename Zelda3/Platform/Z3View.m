@@ -31,6 +31,12 @@ static void ReleaseFrameCallback(void *info, const void *data, size_t size) {
     _frameLayer = [CALayer layer];
     _frameLayer.opaque = YES;
     _frameLayer.actions = noAnim;
+    // Match the screen's backing scale. Left at the CALayer default of 1.0,
+    // this layer composites at a different pixel density than its Retina
+    // superlayer -- on iOS 9.3's compositor that mismatch is what produces
+    // horizontal banding/tearing-looking artifacts across the whole frame,
+    // not just blur.
+    _frameLayer.contentsScale = [UIScreen mainScreen].scale;
     // Nearest-neighbor: this is a pixel-art SNES framebuffer: linear filtering
     // would blur it at the integer-ish scale factors a phone screen gives.
     _frameLayer.magnificationFilter = kCAFilterNearest;
@@ -113,7 +119,10 @@ static void ReleaseFrameCallback(void *info, const void *data, size_t size) {
   CGDataProviderRelease(provider);  // CGImage retains it; this drops our ref
 
   if (img) {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     _frameLayer.contents = (__bridge id)img;
+    [CATransaction commit];
     CGImageRelease(img);
   } else {
     // CGImageCreate failed to take a reference on the provider. We already
