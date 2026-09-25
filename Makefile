@@ -101,7 +101,7 @@ Zelda3/App/TouchButton.m_FILE_FLAGS = -fobjc-arc
 # for just this file rather than patching vendored source.
 third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c_FILE_FLAGS = -Wno-error=unused-function -Wno-unused-function
 
-Zelda3ARMv7_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox AVFoundation
+Zelda3ARMv7_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox AVFoundation OpenGLES
 Zelda3ARMv7_CODESIGN_FLAGS = -Sentitlements.plist
 
 include $(THEOS_MAKE_PATH)/application.mk
