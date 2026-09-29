@@ -1,3 +1,5 @@
+#include <stddef.h>
+#include <stdio.h>
 #include "zelda_rtl.h"
 #include "variables.h"
 #include "misc.h"
@@ -267,7 +269,13 @@ void ZeldaInitialize() {
   g_zenv.ppu = ppu_init(NULL);
   g_zenv.ram = g_ram;
   g_zenv.sram = (uint8*)calloc(8192, 1);
-  g_zenv.vram = g_zenv.ppu->vram;
+  // Take the VRAM pointer from ppu.c itself: the renderer reads ppu->vram as laid
+  // out in ppu.c, and writers here must hit that same array.
+  g_zenv.vram = ppu_getVram(g_zenv.ppu);
+  if (ppu_getVramOffset() != offsetof(Ppu, vram)) {
+    FILE *lf = fopen("ppu_layout_mismatch.txt", "w");
+    if (lf) { fprintf(lf, "ppu.c offsetof(vram)=%zu, zelda_rtl.c offsetof(vram)=%zu\n", ppu_getVramOffset(), offsetof(Ppu, vram)); fclose(lf); }
+  }
   g_zenv.player = SpcPlayer_Create();
   SpcPlayer_Initialize(g_zenv.player);
   dma_reset(g_zenv.dma);
