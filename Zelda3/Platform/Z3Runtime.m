@@ -20,6 +20,7 @@
 #include "src/util.h"
 #include "src/audio.h"
 #include "snes/ppu.h"
+#include "snes/dma.h"
 
 // ---------------------------------------------------------------------------
 // Engine-facing contract (the only symbols the emulator-free core needs)
@@ -232,6 +233,49 @@ int Z3Runtime_Prepare(const char *documents_dir, const char *bundle_dir, char *e
   return 0;
 }
 
+// DEBUG: writes one raw engine frame as a 32-bit top-down BMP into Documents
+// (cwd). Lets us tell whether stripes exist in the engine buffer itself or are
+// introduced later by GL/presentation. Grab it via iTunes File Sharing.
+static void DumpFrameBmp(const char *name, const uint8_t *px, int w, int h, size_t pitch) {
+  FILE *f = fopen(name, "wb");
+  if (!f) return;
+  uint32_t img = (uint32_t)(w * 4 * h), off = 54, total = off + img;
+  uint8_t hd[54] = {0};
+  hd[0] = 'B'; hd[1] = 'M';
+  memcpy(hd + 2, &total, 4); memcpy(hd + 10, &off, 4);
+  uint32_t v = 40; memcpy(hd + 14, &v, 4);
+  int32_t sw = w, sh = -h; memcpy(hd + 18, &sw, 4); memcpy(hd + 22, &sh, 4);
+  uint16_t pl = 1, bpp = 32; memcpy(hd + 26, &pl, 2); memcpy(hd + 28, &bpp, 2);
+  memcpy(hd + 34, &img, 4);
+  fwrite(hd, 1, 54, f);
+  for (int y = 0; y < h; y++) fwrite(px + (size_t)y * pitch, 1, (size_t)w * 4, f);
+  fclose(f);
+}
+
+// DEBUG: dumps PPU/HDMA state that decides how every scanline is drawn.
+static void DumpPpuState(const char *name) {
+  FILE *f = fopen(name, "w");
+  if (!f) return;
+  Ppu *p = g_zenv.ppu;
+  fprintf(f, "mode=%d forcedBlank=%d brightness=%d renderFlags=%d\n", p->mode, p->forcedBlank, p->brightness, p->renderFlags);
+  fprintf(f, "screenEnabled main=%02x sub=%02x windowed main=%02x sub=%02x\n", p->screenEnabled[0], p->screenEnabled[1], p->screenWindowed[0], p->screenWindowed[1]);
+  fprintf(f, "mosaic en=%d size=%d\n", p->mosaicEnabled, p->mosaicSize);
+  fprintf(f, "clipMode=%d preventMath=%d addSub=%d subColor=%d half=%d mathEn=%02x fixed=%d,%d,%d\n",
+          p->clipMode, p->preventMathMode, p->addSubscreen, p->subtractColor, p->halfColor, p->mathEnabled,
+          p->fixedColorR, p->fixedColorG, p->fixedColorB);
+  fprintf(f, "windowsel=%08x w1=%d..%d w2=%d..%d\n", p->windowsel, p->window1left, p->window1right, p->window2left, p->window2right);
+  fprintf(f, "extraLR=%d extraLeftCur=%d extraRightCur=%d extraBottomCur=%d\n", p->extraLeftRight, p->extraLeftCur, p->extraRightCur, p->extraBottomCur);
+  for (int i = 0; i < 8; i++) {
+    DmaChannel *c = &g_zenv.dma->channel[i];
+    fprintf(f, "dma%d hdma=%d dma=%d mode=%d indirect=%d bAdr=%02x aAdr=%04x aBank=%02x indBank=%02x\n",
+            i, c->hdmaActive, c->dmaActive, c->mode, c->indirect, c->bAdr, c->aAdr, c->aBank, c->indBank);
+  }
+  fprintf(f, "cgram[0..31]:");
+  for (int i = 0; i < 32; i++) fprintf(f, " %04x", p->cgram[i]);
+  fprintf(f, "\nsizeof(Ppu)=%zu sizeof(DmaChannel)=%zu\n", sizeof(Ppu), sizeof(DmaChannel));
+  fclose(f);
+}
+
 static void *GameThreadMain(void *unused) {
   (void)unused;
   pthread_setname_np("zelda3.game");
@@ -269,6 +313,7 @@ static void *GameThreadMain(void *unused) {
 
     if (wi >= 0) {
       ZeldaDrawPpuFrame(g.buf[wi], g.pitch, g.ppu_render_flags);
+      if (frame_ctr == 600) { DumpFrameBmp("frame_dump.bmp", g.buf[wi], g.width, g.height, g.pitch); DumpPpuState("frame_state.txt"); }
       pthread_mutex_lock(&g.buf_lock);
       if (g.ready_index >= 0) g.buf_state[g.ready_index] = kBufFree;  // superseded, never shown
       g.buf_state[wi] = kBufReady;
