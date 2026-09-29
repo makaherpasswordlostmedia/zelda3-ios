@@ -276,6 +276,13 @@ static void DumpPpuState(const char *name) {
   fclose(f);
 }
 
+static void DumpBin(const char *name, const void *p, size_t n) {
+  FILE *f = fopen(name, "wb");
+  if (!f) return;
+  fwrite(p, 1, n, f);
+  fclose(f);
+}
+
 static void *GameThreadMain(void *unused) {
   (void)unused;
   pthread_setname_np("zelda3.game");
@@ -313,7 +320,7 @@ static void *GameThreadMain(void *unused) {
 
     if (wi >= 0) {
       ZeldaDrawPpuFrame(g.buf[wi], g.pitch, g.ppu_render_flags);
-      if (frame_ctr == 600) { DumpFrameBmp("frame_dump.bmp", g.buf[wi], g.width, g.height, g.pitch); DumpPpuState("frame_state.txt"); }
+      if (frame_ctr == 600) { DumpFrameBmp("frame_dump.bmp", g.buf[wi], g.width, g.height, g.pitch); DumpPpuState("frame_state.txt"); DumpBin("poly_buf.bin", g_zenv.ram + 0xE800, 0x800); DumpBin("vram.bin", g_zenv.ppu->vram, 0x10000); DumpBin("oam.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); DumpBin("ram_1f00.bin", g_zenv.ram + 0x1F00, 0x100); }
       pthread_mutex_lock(&g.buf_lock);
       if (g.ready_index >= 0) g.buf_state[g.ready_index] = kBufFree;  // superseded, never shown
       g.buf_state[wi] = kBufReady;
