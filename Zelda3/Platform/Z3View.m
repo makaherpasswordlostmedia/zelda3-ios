@@ -108,7 +108,7 @@ static GLuint CompileShader(GLenum type, const char *src) {
       "varying vec2 vTexCoord;\n"
       "uniform sampler2D uTexture;\n"
       "void main() {\n"
-      "  gl_FragColor = texture2D(uTexture, vTexCoord);\n"
+      "  gl_FragColor = vec4(texture2D(uTexture, vTexCoord).bgr, 1.0);\n"
       "}\n";
 
   GLuint vs = CompileShader(GL_VERTEX_SHADER, kVertexSrc);
@@ -209,7 +209,7 @@ static GLuint CompileShader(GLenum type, const char *src) {
   // its real pitch, in pixels, without a packing copy first -- pitch is
   // documented as bytes/row and every row in this engine is 4-byte BGRA, so
   // pitch/4 is exact.
-  glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, (GLint)(f->pitch / 4));
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);  // ES2 has no ROW_LENGTH; pitch == width*4 (see Z3Runtime_Prepare)
 
   if (f->width != _texW || f->height != _texH) {
     // Only grows/reallocates on a real geometry change (e.g. extended
@@ -222,8 +222,6 @@ static GLuint CompileShader(GLenum type, const char *src) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, f->width, f->height,
                      GL_RGBA, GL_UNSIGNED_BYTE, f->pixels);
   }
-
-  glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
 
   if (f->width != _gameW || f->height != _gameH) {
     _gameW = f->width;
@@ -238,6 +236,8 @@ static GLuint CompileShader(GLenum type, const char *src) {
   glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
   glViewport(0, 0, _fbWidth, _fbHeight);
   glClearColor(0, 0, 0, 1);
+  glDisable(GL_BLEND);
+  glDisable(GL_DITHER);
   glClear(GL_COLOR_BUFFER_BIT);
 
   // Aspect-correct letterbox, same math as the old CALayer path.
