@@ -7,6 +7,8 @@
 #include <assert.h>
 #include "ppu.h"
 #include "src/types.h"
+extern uint32_t g_dbg_spr[6][48][8];
+extern uint32_t g_dbg_spr_n[6];
 
 static const uint8 kSpriteSizes[8][2] = {
   {8, 16}, {8, 32}, {8, 64}, {16, 32},
@@ -132,6 +134,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   ppu->renderFlags = render_flags;
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
+  memset(g_dbg_spr_n, 0, sizeof(g_dbg_spr_n));
 
   // Cache the brightness computation
   if (ppu->brightness != ppu->lastBrightnessMult) {
@@ -1247,6 +1250,10 @@ static bool ppu_getWindowState(Ppu* ppu, int layer, int x) {
   return test1 || test2;
 }
 
+// DEBUG: sprite tile fetch trace for lines 76..81
+uint32_t g_dbg_spr[6][48][8];
+uint32_t g_dbg_spr_n[6];
+
 static bool ppu_evaluateSprites(Ppu* ppu, int line) {
   // TODO: iterate over oam normally to determine in-range sprites,
   //   then iterate those in-range sprites in reverse for tile-fetching
@@ -1300,6 +1307,10 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         int usedTile = ((((oam1 & 0xff) >> 4) + (row >> 3)) << 4) | (((oam1 & 0xf) + (usedCol >> 3)) & 0xf);
         uint16 *addr = &ppu->vram[(objAdr + usedTile * 16 + (row & 0x7)) & 0x7fff];
         uint32 plane = addr[0] | addr[8] << 16;
+        if (line >= 76 && line <= 81 && g_dbg_spr_n[line - 76] < 48) {
+          uint32_t *r = g_dbg_spr[line - 76][g_dbg_spr_n[line - 76]++];
+          r[0] = index; r[1] = col; r[2] = row; r[3] = usedTile; r[4] = (uint32_t)(addr - ppu->vram); r[5] = plane; r[6] = (uint32_t)x; r[7] = oam1;
+        }
         // go over each pixel
         int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);
         int px_right = IntMin(256 + kPpuExtraLeftRight - (col + x), 8);
