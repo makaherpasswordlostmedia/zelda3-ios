@@ -280,6 +280,8 @@ extern uint16_t g_dbg_objline[5][kPpuXPixels];
 extern uint8_t g_dbg_objflags[5];
 extern uint32_t g_dbg_spr[6][48][8];
 extern uint32_t g_dbg_spr_n[6];
+extern uint16_t g_dbg_vram_begin[0x400];
+extern uint16_t g_dbg_vram_l77[0x400];
 static void DumpBin(const char *name, const void *p, size_t n) {
   FILE *f = fopen(name, "wb");
   if (!f) return;
@@ -324,7 +326,7 @@ static void *GameThreadMain(void *unused) {
 
     if (wi >= 0) {
       ZeldaDrawPpuFrame(g.buf[wi], g.pitch, g.ppu_render_flags);
-      if (frame_ctr == 600) { DumpFrameBmp("frame_dump.bmp", g.buf[wi], g.width, g.height, g.pitch); DumpPpuState("frame_state.txt"); DumpBin("poly_buf.bin", g_zenv.ram + 0xE800, 0x800); DumpBin("vram.bin", g_zenv.ppu->vram, 0x10000); DumpBin("oam.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); DumpBin("ram_1f00.bin", g_zenv.ram + 0x1F00, 0x100); DumpBin("objline.bin", g_dbg_objline, sizeof(g_dbg_objline)); DumpBin("objflags.bin", g_dbg_objflags, sizeof(g_dbg_objflags)); DumpBin("spr_trace.bin", g_dbg_spr, sizeof(g_dbg_spr)); DumpBin("spr_n.bin", g_dbg_spr_n, sizeof(g_dbg_spr_n)); DumpBin("oam2.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); { uint32_t regs[4] = {g_zenv.ppu->objTileAdr1, g_zenv.ppu->objTileAdr2, g_zenv.ppu->objSize, g_zenv.ppu->renderFlags}; DumpBin("objregs.bin", regs, sizeof(regs)); } }
+      if (frame_ctr == 600) { DumpFrameBmp("frame_dump.bmp", g.buf[wi], g.width, g.height, g.pitch); DumpPpuState("frame_state.txt"); DumpBin("poly_buf.bin", g_zenv.ram + 0xE800, 0x800); DumpBin("vram.bin", ppu_getVram(g_zenv.ppu), 0x10000); DumpBin("oam.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); DumpBin("ram_1f00.bin", g_zenv.ram + 0x1F00, 0x100); DumpBin("objline.bin", g_dbg_objline, sizeof(g_dbg_objline)); DumpBin("objflags.bin", g_dbg_objflags, sizeof(g_dbg_objflags)); DumpBin("spr_trace.bin", g_dbg_spr, sizeof(g_dbg_spr)); DumpBin("spr_n.bin", g_dbg_spr_n, sizeof(g_dbg_spr_n)); DumpBin("vram_begin.bin", g_dbg_vram_begin, sizeof(g_dbg_vram_begin)); DumpBin("vram_l77.bin", g_dbg_vram_l77, sizeof(g_dbg_vram_l77)); DumpBin("oam2.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); { uint32_t regs[4] = {g_zenv.ppu->objTileAdr1, g_zenv.ppu->objTileAdr2, g_zenv.ppu->objSize, g_zenv.ppu->renderFlags}; DumpBin("objregs.bin", regs, sizeof(regs)); } }
       pthread_mutex_lock(&g.buf_lock);
       if (g.ready_index >= 0) g.buf_state[g.ready_index] = kBufFree;  // superseded, never shown
       g.buf_state[wi] = kBufReady;
