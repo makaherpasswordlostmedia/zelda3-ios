@@ -133,6 +133,10 @@ struct Ppu {
 };
 
 Ppu* ppu_init();
+// Single source of truth for where VRAM lives, evaluated inside ppu.c so every
+// other translation unit writes to the exact array the renderer reads.
+uint16_t *ppu_getVram(Ppu *ppu);
+size_t ppu_getVramOffset(void);
 void ppu_free(Ppu* ppu);
 void ppu_reset(Ppu* ppu);
 void ppu_handleVblank(Ppu* ppu);
