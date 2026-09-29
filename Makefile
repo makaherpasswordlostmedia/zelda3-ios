@@ -33,7 +33,7 @@ Zelda3ARMv7_CFLAGS = -O2 -std=gnu11 -I$(THEOS_PROJECT_DIR)/Zelda3/Engine -I$(THE
 	-Wno-error=unused-variable -Wno-unused-variable \
 	-Wno-error=unused-but-set-variable -Wno-unused-but-set-variable \
 	-Wno-error=deprecated-non-prototype -Wno-deprecated-non-prototype \
-	-mno-unaligned-access
+	-mno-unaligned-access -fno-strict-aliasing -fwrapv
 
 Zelda3ARMv7_FILES = \
 	Zelda3/Engine/src/ancilla.c \
