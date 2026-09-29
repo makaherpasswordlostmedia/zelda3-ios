@@ -161,6 +161,9 @@ static inline void ClearBackdrop(PpuPixelPrioBufs *buf) {
 }
 
 
+uint16_t g_dbg_objline[5][kPpuXPixels];
+uint8_t g_dbg_objflags[5];
+
 void ppu_runLine(Ppu *ppu, int line) {
   if(line != 0) {
     if (ppu->mosaicSize != ppu->lastMosaicModulo) {
@@ -174,6 +177,11 @@ void ppu_runLine(Ppu *ppu, int line) {
     // evaluate sprites
     ClearBackdrop(&ppu->objBuffer);
     ppu->lineHasSprites = !ppu->forcedBlank && ppu_evaluateSprites(ppu, line - 1);
+    // DEBUG: capture the per-line sprite buffer for lines around a defective row
+    if (line >= 78 && line <= 82) {
+      memcpy(g_dbg_objline[line - 78], ppu->objBuffer.data, sizeof(g_dbg_objline[0]));
+      g_dbg_objflags[line - 78] = ppu->lineHasSprites;
+    }
 
     // outside of visible range?
     if (line >= 225 + ppu->extraBottomCur) {
