@@ -152,9 +152,12 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   }
 }
 
+typedef uint64 __attribute__((may_alias, aligned(8))) PpuAliasU64;
 static inline void ClearBackdrop(PpuPixelPrioBufs *buf) {
+  // may_alias: the buffer is uint16 but written 4 entries at a time; without
+  // this (or -fno-strict-aliasing) clang -O2 on armv7 may reorder these stores.
   for (size_t i = 0; i != countof(buf->data); i += 4)
-    *(uint64*)&buf->data[i] = 0x0500050005000500;
+    *(PpuAliasU64*)&buf->data[i] = 0x0500050005000500ULL;
 }
 
 
