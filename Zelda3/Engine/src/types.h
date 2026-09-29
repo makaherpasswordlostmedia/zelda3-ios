@@ -18,6 +18,14 @@ typedef uint16_t uint16;
 typedef int16_t int16;
 typedef uint32_t uint32;
 typedef int32_t int32;
+// 16/32-bit views into g_ram at odd/unaligned offsets (the game's WRAM layout
+// has many). Plain uint16* lets ARM compilers assume natural alignment and
+// merge/reorder adjacent accesses (LDRD/LDM/STM fault or corrupt on unaligned
+// addresses), which corrupted e.g. the triforce polyhedron rasterizer.
+typedef uint16_t __attribute__((aligned(1), may_alias)) uint16_u;
+typedef int16_t  __attribute__((aligned(1), may_alias)) int16_u;
+typedef uint32_t __attribute__((aligned(1), may_alias)) uint32_u;
+typedef int32_t  __attribute__((aligned(1), may_alias)) int32_u;
 typedef uint64_t uint64;
 typedef int64_t int64;
 typedef unsigned int uint;
@@ -59,8 +67,8 @@ static FORCEINLINE uint UintMax(uint a, uint b) { return a > b ? a : b; }
 
 #define BYTE(x) (*(uint8*)&(x))
 #define HIBYTE(x) (((uint8*)&(x))[1])
-#define WORD(x) (*(uint16*)&(x))
-#define DWORD(x) (*(uint32*)&(x))
+#define WORD(x) (*(uint16_u*)&(x))
+#define DWORD(x) (*(uint32_u*)&(x))
 #define XY(x, y) ((y)*64+(x))
 
 #ifndef swap16
