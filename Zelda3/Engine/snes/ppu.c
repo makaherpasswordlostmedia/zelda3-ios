@@ -9,6 +9,8 @@
 #include "src/types.h"
 extern uint32_t g_dbg_spr[6][48][8];
 extern uint32_t g_dbg_spr_n[6];
+extern uint16_t g_dbg_vram_begin[0x400];
+extern uint16_t g_dbg_vram_l77[0x400];
 
 static const uint8 kSpriteSizes[8][2] = {
   {8, 16}, {8, 32}, {8, 64}, {16, 32},
@@ -40,6 +42,9 @@ Ppu* ppu_init() {
   ppu->extraLeftRight = kPpuExtraLeftRight;
   return ppu;
 }
+
+uint16_t *ppu_getVram(Ppu *ppu) { return ppu->vram; }
+size_t ppu_getVramOffset(void) { return offsetof(Ppu, vram); }
 
 void ppu_free(Ppu* ppu) {
   free(ppu);
@@ -135,6 +140,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
   memset(g_dbg_spr_n, 0, sizeof(g_dbg_spr_n));
+  memcpy(g_dbg_vram_begin, &ppu->vram[0x5800], sizeof(g_dbg_vram_begin));
 
   // Cache the brightness computation
   if (ppu->brightness != ppu->lastBrightnessMult) {
@@ -150,7 +156,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   if (PpuGetCurrentRenderScale(ppu, ppu->renderFlags) == 4) {
     for (int i = 0; i < 256; i++) {
       uint32 color = ppu->cgram[i];
-      ppu->colorMapRgb[i] = ppu->brightnessMult[color & 0x1f] << 16 | ppu->brightnessMult[(color >> 5) & 0x1f] << 8 | ppu->brightnessMult[(color >> 10) & 0x1f];
+      ppu->colorMapRgb[i] = (uint32)ppu->brightnessMult[color & 0x1f] << 16 | ppu->brightnessMult[(color >> 5) & 0x1f] << 8 | ppu->brightnessMult[(color >> 10) & 0x1f];
     }
   }
 }
@@ -180,6 +186,7 @@ void ppu_runLine(Ppu *ppu, int line) {
     // evaluate sprites
     ClearBackdrop(&ppu->objBuffer);
     ppu->lineHasSprites = !ppu->forcedBlank && ppu_evaluateSprites(ppu, line - 1);
+    if (line == 77) memcpy(g_dbg_vram_l77, &ppu->vram[0x5800], sizeof(g_dbg_vram_l77));
     // DEBUG: capture the per-line sprite buffer for lines around a defective row
     if (line >= 78 && line <= 82) {
       memcpy(g_dbg_objline[line - 78], ppu->objBuffer.data, sizeof(g_dbg_objline[0]));
@@ -291,7 +298,7 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZb
 #define DO_PIXEL_HFLIP(i) do { \
   pixel = (bits >> (7 - i)) & 1 | (bits >> (14 - i)) & 2 | (bits >> (21 - i)) & 4 | (bits >> (28 - i)) & 8; \
   if ((bits & (0x80808080 >> i)) && z > dstz[i]) dstz[i] = z + pixel; } while (0)
-#define READ_BITS(ta, tile) (addr = &ppu->vram[((ta) + (tile) * 16) & 0x7fff], addr[0] | addr[8] << 16)
+#define READ_BITS(ta, tile) (addr = &ppu->vram[((ta) + (tile) * 16) & 0x7fff], (uint32)addr[0] | ((uint32)addr[8] << 16))
   enum { kPaletteShift = 6 };
   if (!IS_SCREEN_ENABLED(ppu, sub, layer))
     return;  // layer is completely hidden
@@ -486,7 +493,7 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZb
 static void PpuDrawBackground_4bpp_mosaic(Ppu *ppu, uint y, bool sub, uint layer, PpuZbufType zhi, PpuZbufType zlo) {
 #define GET_PIXEL() pixel = (bits) & 1 | (bits >> 7) & 2 | (bits >> 14) & 4 | (bits >> 21) & 8
 #define GET_PIXEL_HFLIP() pixel = (bits >> 7) & 1 | (bits >> 14) & 2 | (bits >> 21) & 4 | (bits >> 28) & 8
-#define READ_BITS(ta, tile) (addr = &ppu->vram[((ta) + (tile) * 16) & 0x7fff], addr[0] | addr[8] << 16)
+#define READ_BITS(ta, tile) (addr = &ppu->vram[((ta) + (tile) * 16) & 0x7fff], (uint32)addr[0] | ((uint32)addr[8] << 16))
   enum { kPaletteShift = 6 };
   if (!IS_SCREEN_ENABLED(ppu, sub, layer))
     return;  // layer is completely hidden
@@ -1253,6 +1260,8 @@ static bool ppu_getWindowState(Ppu* ppu, int layer, int x) {
 // DEBUG: sprite tile fetch trace for lines 76..81
 uint32_t g_dbg_spr[6][48][8];
 uint32_t g_dbg_spr_n[6];
+uint16_t g_dbg_vram_begin[0x400];
+uint16_t g_dbg_vram_l77[0x400];
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line) {
   // TODO: iterate over oam normally to determine in-range sprites,
@@ -1305,8 +1314,13 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
         // figure out which tile this uses, looping within 16x16 pages, and get it's data
         int usedCol = oam1 & 0x4000 ? spriteSize - 1 - col : col;
         int usedTile = ((((oam1 & 0xff) >> 4) + (row >> 3)) << 4) | (((oam1 & 0xf) + (usedCol >> 3)) & 0xf);
-        uint16 *addr = &ppu->vram[(objAdr + usedTile * 16 + (row & 0x7)) & 0x7fff];
-        uint32 plane = addr[0] | addr[8] << 16;
+        uint32 vidx = (uint32)(objAdr + usedTile * 16 + (row & 0x7)) & 0x7fff;
+        uint16 *addr = &ppu->vram[vidx];
+        // Explicit, unsigned, volatile reads: no merging/reordering of the two
+        // halves and no signed (int)<<16 overflow.
+        uint32 plane_lo = ((volatile uint16 *)ppu->vram)[vidx];
+        uint32 plane_hi = ((volatile uint16 *)ppu->vram)[(vidx + 8) & 0x7fff];
+        uint32 plane = plane_lo | (plane_hi << 16);
         if (line >= 76 && line <= 81 && g_dbg_spr_n[line - 76] < 48) {
           uint32_t *r = g_dbg_spr[line - 76][g_dbg_spr_n[line - 76]++];
           r[0] = index; r[1] = col; r[2] = row; r[3] = usedTile; r[4] = (uint32_t)(addr - ppu->vram); r[5] = plane; r[6] = (uint32_t)x; r[7] = oam1;
