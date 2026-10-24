@@ -265,6 +265,12 @@ jobs:
           static __unsafe_unretained GameViewController *g_currentVC;
           static void FatalHandler(const char *message);
 
+          // UITextAlignmentCenter == 1 on iOS 5, NSTextAlignmentCenter == 2 on iOS 6+. Pick at runtime
+          // so it is right on both and compiles against any SDK without enum-conversion errors.
+          static inline int Z3AlignCenter(void) {
+            return [[[UIDevice currentDevice] systemVersion] floatValue] >= 6.0f ? 2 : 1;
+          }
+
           @implementation GameViewController {
             Z3View *_gameView;
             UILabel *_statusLabel;
@@ -342,7 +348,7 @@ jobs:
               _statusLabel.numberOfLines = 0;
               _statusLabel.backgroundColor = [UIColor clearColor];
               _statusLabel.textColor = [UIColor whiteColor];
-              _statusLabel.textAlignment = UITextAlignmentCenter;
+              _statusLabel.textAlignment = Z3AlignCenter();
               _statusLabel.font = [UIFont systemFontOfSize:16];
               [self.view addSubview:_statusLabel];
 
@@ -444,6 +450,12 @@ jobs:
             Z3Runtime_SetButtons(updated);
           }
 
+          // UITextAlignmentCenter == 1 on iOS 5, NSTextAlignmentCenter == 2 on iOS 6+. Pick at runtime
+          // so it is right on both and compiles against any SDK without enum-conversion errors.
+          static inline int Z3AlignCenter(void) {
+            return [[[UIDevice currentDevice] systemVersion] floatValue] >= 6.0f ? 2 : 1;
+          }
+
           @implementation TouchButton {
             uint32_t _bit;
             UILabel *_titleLabel;
@@ -461,7 +473,7 @@ jobs:
               self.layer.cornerRadius = 8;
               _titleLabel = [[UILabel alloc] initWithFrame:self.bounds];
               _titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-              _titleLabel.textAlignment = UITextAlignmentCenter;
+              _titleLabel.textAlignment = Z3AlignCenter();
               _titleLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.85];
               _titleLabel.font = [UIFont boldSystemFontOfSize:15];
               [self addSubview:_titleLabel];
