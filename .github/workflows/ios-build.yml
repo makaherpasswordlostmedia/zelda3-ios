@@ -1,4 +1,4 @@
-name: Build iOS .ipa (armv7, iOS 7+)
+name: Build iOS .ipa (armv7, iOS 5+)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - "Makefile"
       - "control"
       - "entitlements.plist"
-      - ".github/workflows/ios-build.yml"
+      - ".github/workflows/ios5-build.yml"
   pull_request:
     branches: [main]
     paths:
@@ -18,12 +18,12 @@ on:
       - "Makefile"
       - "control"
       - "entitlements.plist"
-      - ".github/workflows/ios-build.yml"
+      - ".github/workflows/ios5-build.yml"
   workflow_dispatch: {}
 
 jobs:
   build-ios-armv7:
-    name: Build (Theos / iOS 7+ / armv7)
+    name: Build (Theos / iOS 5+ / armv7)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -83,25 +83,755 @@ jobs:
           echo "remaining module.map files:"
           find "$SDK" -name module.map | wc -l
 
-      - name: Patch sources (ppu.h layout fix, Z3View stripe fix)
+      - name: Apply iOS 5 port (overwrite changed files)
         run: |
-          cp -f Zelda3/Engine/snes/ppu.h snes/ppu.h
-          python3 - <<'PYEOF'
-          import sys
-          p = 'Zelda3/Platform/Z3View.m'
-          s = open(p, newline='').read()
-          crlf = '\r\n' in s
-          s = s.replace('\r\n', '\n')
+          set -e
+          mkdir -p $(dirname Makefile)
+          cat > Makefile <<'Z3EOF'
+          # Zelda3 (armv7 / iOS 5.0+) -- Theos application
+          # Built with a newer SDK (9.3 here, any SDK that still ships armv7 works) but with
+          # DEPLOYMENT TARGET 5.0: the second number below is what ends up in the Mach-O
+          # (LC_VERSION_MIN_IPHONEOS) and MinimumOSVersion in Resources/Info.plist. Every
+          # API used by Zelda3/App and Zelda3/Platform was compile-checked against the real
+          # iPhoneOS 5.1 SDK, so nothing newer than iOS 5.0 is referenced.
+          # Devices: iPhone 3GS/4/4S, iPod touch 3/4, iPad 1/2 on iOS 5.x (jailbroken --
+          # see README: iOS 5 cannot run unsigned apps).
+          TARGET := iphone:clang:9.3:5.0
+          ARCHS = armv7
 
-          def rep(old, new, what):
-              global s
-              if s.count(old) != 1:
-                  sys.exit('PATCH FAILED (%s): found %d matches' % (what, s.count(old)))
-              s = s.replace(old, new)
+          # Same clang-19-vs-old-SDK-modulemap workaround as before.
+          export ADDITIONAL_OBJCFLAGS += -Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map
 
-          a = s.index('  static const char *kFragmentSrc =')
-          b = s.index('  GLuint vs = CompileShader')
-          s = s[:a] + r'''  static const char *kFragmentSrc =
+          include $(THEOS)/makefiles/common.mk
+
+          APPLICATION_NAME = Zelda3ARMv7
+
+          # Baseline applies to both .c and .m: -fobjc-arc/-fno-objc-arc only affect
+          # Objective-C translation units, so it is harmless on the plain-C engine files
+          # below -- ARC itself is enabled per-file for the .m files via _FILE_FLAGS,
+          # since Theos (like the gnustep-make it is built on) does not expose separate
+          # CFLAGS/OBJCFLAGS variables that route to .c vs .m independently.
+          Zelda3ARMv7_CFLAGS = -O2 -std=gnu11 -I$(THEOS_PROJECT_DIR)/Zelda3/Engine -I$(THEOS_PROJECT_DIR)/Zelda3/Platform \
+          	-I$(THEOS_PROJECT_DIR)/third_party/opus-1.3.1-stripped \
+          	-Wno-deprecated-declarations -Wno-unknown-warning-option \
+          	-Wno-error=deprecated-module-dot-map -Wno-deprecated-module-dot-map \
+          	-Wno-error=nullability-completeness -Wno-nullability-completeness \
+          	-Wno-error=unused-command-line-argument -Wno-unused-command-line-argument \
+          	-Wno-error=incomplete-umbrella -Wno-incomplete-umbrella \
+          	-Wno-error=non-modular-include-in-framework-module \
+          	-Wno-non-modular-include-in-framework-module \
+          	-Wno-error=non-modular-include-in-module -Wno-non-modular-include-in-module \
+          	-Wno-error=bitwise-op-parentheses -Wno-bitwise-op-parentheses \
+          	-Wno-error=logical-op-parentheses -Wno-logical-op-parentheses \
+          	-Wno-error=parentheses -Wno-parentheses \
+          	-Wno-error=unused-variable -Wno-unused-variable \
+          	-Wno-error=unused-but-set-variable -Wno-unused-but-set-variable \
+          	-Wno-error=deprecated-non-prototype -Wno-deprecated-non-prototype \
+          	-mno-unaligned-access -fno-strict-aliasing -fwrapv
+
+          Zelda3ARMv7_FILES = \
+          	Zelda3/Engine/src/ancilla.c \
+          	Zelda3/Engine/src/attract.c \
+          	Zelda3/Engine/src/audio.c \
+          	Zelda3/Engine/src/config.c \
+          	Zelda3/Engine/src/dungeon.c \
+          	Zelda3/Engine/src/ending.c \
+          	Zelda3/Engine/src/hud.c \
+          	Zelda3/Engine/src/load_gfx.c \
+          	Zelda3/Engine/src/messaging.c \
+          	Zelda3/Engine/src/misc.c \
+          	Zelda3/Engine/src/nmi.c \
+          	Zelda3/Engine/src/overlord.c \
+          	Zelda3/Engine/src/overworld.c \
+          	Zelda3/Engine/src/player.c \
+          	Zelda3/Engine/src/player_oam.c \
+          	Zelda3/Engine/src/poly.c \
+          	Zelda3/Engine/src/select_file.c \
+          	Zelda3/Engine/src/spc_player.c \
+          	Zelda3/Engine/src/sprite.c \
+          	Zelda3/Engine/src/sprite_main.c \
+          	Zelda3/Engine/src/tagalong.c \
+          	Zelda3/Engine/src/tile_detect.c \
+          	Zelda3/Engine/src/util.c \
+          	Zelda3/Engine/src/zelda_rtl.c \
+          	Zelda3/Engine/snes/apu.c \
+          	Zelda3/Engine/snes/dma.c \
+          	Zelda3/Engine/snes/dsp.c \
+          	Zelda3/Engine/snes/ppu.c \
+          	Zelda3/Engine/snes/spc.c \
+          	Zelda3/Engine/snes/tracing.c \
+          	Zelda3/Engine/keyname.c \
+          	third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c \
+          	Zelda3/Platform/bus_stubs.c \
+          	Zelda3/Platform/Z3Runtime.m \
+          	Zelda3/Platform/Z3View.m \
+          	Zelda3/Platform/Z3Audio.m \
+          	Zelda3/App/AppDelegate.m \
+          	Zelda3/App/GameViewController.m \
+          	Zelda3/App/TouchButton.m
+
+          # NOTE: intentionally NOT compiled -- see comments where each is referenced:
+          #   Engine/src/main.c, opengl.c, glsl_shader.c   (SDL/GL desktop entry point; replaced by Platform/)
+          #   Engine/src/zelda_cpu_infra.c                 (reference 65816 emulator: desktop-only ROM
+          #                                                  verification harness, never called at runtime)
+          #   Engine/snes/{cpu,snes,cart,input,snes_other}.c (belong to that same reference emulator;
+          #                                                  their headers are still included for struct
+          #                                                  typedefs used by ppu.h/dma.h -- see bus_stubs.c)
+
+          # ARC only for the ObjC platform/app files; the engine core and bus_stubs.c
+          # are plain C and unaffected by this flag either way, but being explicit here
+          # avoids ever silently ARC-ifying a future .m file added to the engine tree.
+          Zelda3/Platform/Z3Runtime.m_FILE_FLAGS = -fobjc-arc
+          Zelda3/Platform/Z3View.m_FILE_FLAGS = -fobjc-arc
+          Zelda3/Platform/Z3Audio.m_FILE_FLAGS = -fobjc-arc
+          Zelda3/App/AppDelegate.m_FILE_FLAGS = -fobjc-arc
+          Zelda3/App/GameViewController.m_FILE_FLAGS = -fobjc-arc
+          Zelda3/App/TouchButton.m_FILE_FLAGS = -fobjc-arc
+
+          # Third-party (unmodified libopus, stripped-decoder build): the amalgam
+          # includes an internal encoder-side stub (ec_encode_bin) and a helper
+          # (smooth_fade) that this decoder-only configuration never calls. That's
+          # upstream's code shape, not ours to edit, so silence just this warning
+          # for just this file rather than patching vendored source.
+          third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c_FILE_FLAGS = -Wno-error=unused-function -Wno-unused-function
+
+          Zelda3ARMv7_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox OpenGLES
+          Zelda3ARMv7_CODESIGN_FLAGS = -Sentitlements.plist
+
+          include $(THEOS_MAKE_PATH)/application.mk
+          Z3EOF
+          mkdir -p $(dirname control)
+          cat > control <<'Z3EOF'
+          Package: org.snesrev.zelda3.armv7
+          Name: Zelda3
+          Version: 1.0
+          Architecture: iphoneos-arm
+          Description: The Legend of Zelda: A Link to the Past (zelda3 decompilation), ported to 32-bit iOS 5.0+ / armv7
+          Maintainer: Zelda3ARMv7
+          Author: Zelda3ARMv7
+          Section: Applications
+          Depends: firmware (>= 5.0)
+          Z3EOF
+          mkdir -p $(dirname Resources/Info.plist)
+          cat > Resources/Info.plist <<'Z3EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>CFBundleDevelopmentRegion</key>
+          	<string>en</string>
+          	<key>CFBundleExecutable</key>
+          	<string>Zelda3ARMv7</string>
+          	<key>CFBundleIdentifier</key>
+          	<string>org.snesrev.zelda3.armv7</string>
+          	<key>CFBundleInfoDictionaryVersion</key>
+          	<string>6.0</string>
+          	<key>CFBundleName</key>
+          	<string>Zelda3</string>
+          	<key>CFBundlePackageType</key>
+          	<string>APPL</string>
+          	<key>CFBundleShortVersionString</key>
+          	<string>1.0</string>
+          	<key>CFBundleVersion</key>
+          	<string>1</string>
+          	<key>LSRequiresIPhoneOS</key>
+          	<true/>
+          	<key>UIDeviceFamily</key>
+          	<array>
+          		<integer>1</integer>
+          		<integer>2</integer>
+          	</array>
+          	<key>UIRequiredDeviceCapabilities</key>
+          	<array>
+          		<string>armv7</string>
+          		<string>opengles-2</string>
+          	</array>
+          	<key>UISupportedInterfaceOrientations</key>
+          	<array>
+          		<string>UIInterfaceOrientationLandscapeLeft</string>
+          		<string>UIInterfaceOrientationLandscapeRight</string>
+          	</array>
+          	<key>UIStatusBarHidden</key>
+          	<true/>
+          	<key>MinimumOSVersion</key>
+          	<string>5.0</string>
+          	<key>ITSAppUsesNonExemptEncryption</key>
+          	<false/>
+          	<!-- The ROM is user-supplied (iTunes File Sharing), so users need to see and
+          	     add files in Documents via Finder/iTunes -- and we want zelda3_assets.dat
+          	     visible there too so it can be backed up/restored across reinstalls. -->
+          	<key>UIFileSharingEnabled</key>
+          	<true/>
+          	<key>LSSupportsOpeningDocumentsInPlace</key>
+          	<false/>
+          </dict>
+          </plist>
+          Z3EOF
+          mkdir -p $(dirname Zelda3/App/GameViewController.m)
+          cat > Zelda3/App/GameViewController.m <<'Z3EOF'
+          // GameViewController.m -- iOS 5.0+ (no UIAlertController, no NSTextAlignment*,
+          // no -[NSArray firstObject], no keyed subscripting, no Auto Layout).
+          #import "GameViewController.h"
+          #import "Z3View.h"
+          #import "TouchButton.h"
+          #include "Z3Runtime.h"
+          #include "Z3Audio.h"
+
+          // Die() may fire on the game thread; the handler hops to the main thread.
+          // __unsafe_unretained: no zeroing-weak dependency, cleared in -dealloc.
+          static __unsafe_unretained GameViewController *g_currentVC;
+          static void FatalHandler(const char *message);
+
+          @implementation GameViewController {
+            Z3View *_gameView;
+            UILabel *_statusLabel;
+            UIButton *_retryButton;
+            BOOL _started;
+
+            // On-screen controls, laid out in -viewDidLayoutSubviews because on iOS 5
+            // the view still has portrait bounds in -viewDidLoad of a landscape-only app.
+            TouchDPad *_dpad;
+            TouchButton *_btnA, *_btnB, *_btnX, *_btnY, *_btnL, *_btnR, *_btnSelect, *_btnStart;
+          }
+
+          - (void)viewDidLoad {
+            [super viewDidLoad];
+            g_currentVC = self;
+            self.view.backgroundColor = [UIColor blackColor];
+            Z3Runtime_SetFatalHandler(FatalHandler);
+            [self tryBoot];
+          }
+
+          - (void)dealloc {
+            if (g_currentVC == self) g_currentVC = nil;
+          }
+
+          // iOS 5 (and 6+, where it is deprecated but still honoured as a fallback)
+          // decides rotation here; Info.plist alone is not enough on iOS 5.
+          - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)o {
+            return UIInterfaceOrientationIsLandscape(o);
+          }
+
+          static void FatalHandler(const char *message) {
+            NSString *msg = [NSString stringWithUTF8String:message ? message : "unknown error"];
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [g_currentVC showFatalAlert:msg];
+            });
+          }
+
+          - (NSString *)documentsDir {
+            return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) objectAtIndex:0];
+          }
+
+          - (void)tryBoot {
+            char err[256] = {0};
+            int rc = Z3Runtime_Prepare([[self documentsDir] UTF8String],
+                                       [[[NSBundle mainBundle] bundlePath] UTF8String], err, sizeof(err));
+            if (rc != 0) {
+              [self showRomHelp:[NSString stringWithUTF8String:err]];
+              return;
+            }
+            [self startGame];
+          }
+
+          - (void)startGame {
+            if (_started) return;
+            _started = YES;
+            [_retryButton removeFromSuperview]; _retryButton = nil;
+            [_statusLabel removeFromSuperview]; _statusLabel = nil;
+
+            _gameView = [[Z3View alloc] initWithFrame:self.view.bounds];
+            _gameView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [self.view addSubview:_gameView];
+            [self buildTouchOverlay];
+            [self layoutTouchOverlay];
+
+            Z3Runtime_Start();
+            Z3Audio_Start();
+            [_gameView start];
+          }
+
+          // No ROM yet: iOS 5 has no document picker, so iTunes File Sharing (or SSH/Filza
+          // on a jailbroken device) is the only way in.
+          - (void)showRomHelp:(NSString *)reason {
+            if (!_statusLabel) {
+              _statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+              _statusLabel.numberOfLines = 0;
+              _statusLabel.backgroundColor = [UIColor clearColor];
+              _statusLabel.textColor = [UIColor whiteColor];
+              _statusLabel.textAlignment = UITextAlignmentCenter;
+              _statusLabel.font = [UIFont systemFontOfSize:16];
+              [self.view addSubview:_statusLabel];
+
+              _retryButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+              [_retryButton setTitle:@"Retry" forState:UIControlStateNormal];
+              [_retryButton addTarget:self action:@selector(tryBoot) forControlEvents:UIControlEventTouchUpInside];
+              [self.view addSubview:_retryButton];
+            }
+            _statusLabel.text = [NSString stringWithFormat:
+                @"%@\n\nConnect the device to a computer, open this app in iTunes > Apps > File Sharing, "
+                @"and copy your own zelda3.sfc (US release) into it. Then tap Retry.", reason];
+            [self.view setNeedsLayout];
+          }
+
+          - (void)showFatalAlert:(NSString *)message {
+            UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"Zelda3 stopped"
+                                                         message:message
+                                                        delegate:nil
+                                               cancelButtonTitle:@"OK"
+                                               otherButtonTitles:nil];
+            [av show];
+          }
+
+          - (TouchButton *)addButton:(NSString *)name {
+            TouchButton *b = [TouchButton buttonWithLabel:name];
+            [self.view addSubview:b];
+            return b;
+          }
+
+          - (void)buildTouchOverlay {
+            _dpad = [[TouchDPad alloc] initWithFrame:CGRectZero];
+            [self.view addSubview:_dpad];
+            _btnA = [self addButton:@"A"];
+            _btnB = [self addButton:@"B"];
+            _btnX = [self addButton:@"X"];
+            _btnY = [self addButton:@"Y"];
+            _btnL = [self addButton:@"L"];
+            _btnR = [self addButton:@"R"];
+            _btnSelect = [self addButton:@"Select"];
+            _btnStart = [self addButton:@"Start"];
+          }
+
+          - (void)layoutTouchOverlay {
+            if (!_dpad) return;
+            CGRect b = self.view.bounds;
+            CGFloat w = b.size.width, h = b.size.height;
+            CGFloat pad = 16;
+            CGFloat s = MAX(56.0, floor(MIN(w, h) * 0.12));   // bigger buttons on iPad
+
+            _dpad.frame = CGRectMake(pad, h - 3 * s - pad, 3 * s, 3 * s);
+
+            CGFloat rx = w - pad - 2.4 * s, ry = h - 2.4 * s - pad;
+            _btnA.frame = CGRectMake(rx + 1.2 * s, ry,           s, s);
+            _btnB.frame = CGRectMake(rx + 0.6 * s, ry + 0.9 * s, s, s);
+            _btnX.frame = CGRectMake(rx + 0.6 * s, ry - 0.9 * s, s, s);
+            _btnY.frame = CGRectMake(rx,           ry,           s, s);
+
+            CGFloat sw = MAX(70.0, s * 1.25), sh = MAX(28.0, s * 0.5);
+            _btnSelect.frame = CGRectMake(w / 2 - sw - 12, h - sh - 12, sw, sh);
+            _btnStart.frame  = CGRectMake(w / 2 + 12,      h - sh - 12, sw, sh);
+
+            CGFloat sb = MAX(60.0, s * 1.1);
+            _btnL.frame = CGRectMake(pad,              pad, sb, 36);
+            _btnR.frame = CGRectMake(w - pad - sb,     pad, sb, 36);
+          }
+
+          - (void)viewDidLayoutSubviews {
+            [super viewDidLayoutSubviews];
+            CGRect b = self.view.bounds;
+            if (_statusLabel) {
+              _statusLabel.frame = CGRectMake(24, 24, b.size.width - 48, b.size.height - 110);
+              _retryButton.frame = CGRectMake((b.size.width - 120) / 2, b.size.height - 70, 120, 44);
+            }
+            [self layoutTouchOverlay];
+          }
+
+          @end
+          Z3EOF
+          mkdir -p $(dirname Zelda3/App/TouchButton.m)
+          cat > Zelda3/App/TouchButton.m <<'Z3EOF'
+          // TouchButton.m
+          #import "TouchButton.h"
+          #import <QuartzCore/QuartzCore.h>
+          #include "Z3Runtime.h"
+          #include <stdatomic.h>
+
+          // All touch controls OR their bit into this and call Z3Runtime_SetButtons with
+          // the combined result -- a single button's -touchesBegan: must not stomp on
+          // bits another button already set, since UIKit delivers each control's
+          // touches independently and concurrently.
+          static _Atomic uint32_t g_padMask;
+
+          static void UpdateMask(uint32_t bit, BOOL down) {
+            uint32_t old, updated;
+            do {
+              old = atomic_load(&g_padMask);
+              updated = down ? (old | bit) : (old & ~bit);
+            } while (!atomic_compare_exchange_weak(&g_padMask, &old, updated));
+            Z3Runtime_SetButtons(updated);
+          }
+
+          @implementation TouchButton {
+            uint32_t _bit;
+            UILabel *_titleLabel;
+          }
+
+          + (instancetype)buttonWithLabel:(NSString *)label {
+            TouchButton *b = [[self alloc] initWithFrame:CGRectZero];
+            b.label = label;
+            return b;
+          }
+
+          - (instancetype)initWithFrame:(CGRect)frame {
+            if ((self = [super initWithFrame:frame])) {
+              self.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+              self.layer.cornerRadius = 8;
+              _titleLabel = [[UILabel alloc] initWithFrame:self.bounds];
+              _titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+              _titleLabel.textAlignment = UITextAlignmentCenter;
+              _titleLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.85];
+              _titleLabel.font = [UIFont boldSystemFontOfSize:15];
+              [self addSubview:_titleLabel];
+            }
+            return self;
+          }
+
+          - (void)setLabel:(NSString *)label {
+            _label = label;
+            _titleLabel.text = label;
+            // Button-name -> engine bit. Kept local to this view instead of a lookup
+            // table shared across the app: this file is the only place button labels
+            // are chosen or interpreted, so the mapping has exactly one place to change.
+            static NSDictionary *map;
+            static dispatch_once_t once;
+            dispatch_once(&once, ^{
+              map = @{ @"A": @(kZ3Btn_A), @"B": @(kZ3Btn_B), @"X": @(kZ3Btn_X), @"Y": @(kZ3Btn_Y),
+                       @"L": @(kZ3Btn_L), @"R": @(kZ3Btn_R),
+                       @"Start": @(kZ3Btn_Start), @"Select": @(kZ3Btn_Select) };
+            });
+            _bit = [[map objectForKey:label] unsignedIntValue];
+          }
+
+          - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
+            self.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.35];
+            UpdateMask(_bit, YES);
+          }
+          - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event { [self release_]; }
+          - (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event { [self release_]; }
+          - (void)release_ {
+            self.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.18];
+            UpdateMask(_bit, NO);
+          }
+
+          @end
+
+          @implementation TouchDPad {
+            uint32_t _currentBits;
+          }
+
+          - (instancetype)initWithFrame:(CGRect)frame {
+            if ((self = [super initWithFrame:frame])) {
+              self.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+              self.layer.cornerRadius = 8;
+            }
+            return self;
+          }
+
+          - (uint32_t)bitsForPoint:(CGPoint)pt {
+            // Dead zone in the middle third; outer ring split into 8 directions so
+            // diagonals (e.g. Up+Right) are reachable the way a real d-pad allows.
+            CGPoint c = CGPointMake(self.bounds.size.width / 2, self.bounds.size.height / 2);
+            CGFloat dx = pt.x - c.x, dy = pt.y - c.y;
+            CGFloat r = MIN(c.x, c.y);
+            if (dx * dx + dy * dy < (r * 0.28) * (r * 0.28)) return 0;
+            uint32_t bits = 0;
+            CGFloat angle = atan2(dy, dx);  // -pi..pi, 0 = right, +pi/2 = down (UIKit y-down)
+            CGFloat deg = angle * 180.0 / M_PI;
+            if (deg < 0) deg += 360;
+            // 8 sectors of 45deg, centered on each cardinal/diagonal direction.
+            if (deg >= 337.5 || deg < 22.5)        bits = kZ3Btn_Right;
+            else if (deg < 67.5)                   bits = kZ3Btn_Right | kZ3Btn_Down;
+            else if (deg < 112.5)                  bits = kZ3Btn_Down;
+            else if (deg < 157.5)                  bits = kZ3Btn_Down | kZ3Btn_Left;
+            else if (deg < 202.5)                  bits = kZ3Btn_Left;
+            else if (deg < 247.5)                  bits = kZ3Btn_Left | kZ3Btn_Up;
+            else if (deg < 292.5)                  bits = kZ3Btn_Up;
+            else                                   bits = kZ3Btn_Up | kZ3Btn_Right;
+            return bits;
+          }
+
+          - (void)applyBits:(uint32_t)newBits {
+            static const uint32_t kDirMask = kZ3Btn_Up | kZ3Btn_Down | kZ3Btn_Left | kZ3Btn_Right;
+            uint32_t old, updated;
+            do {
+              old = atomic_load(&g_padMask);
+              updated = (old & ~kDirMask) | newBits;
+            } while (!atomic_compare_exchange_weak(&g_padMask, &old, updated));
+            Z3Runtime_SetButtons(updated);
+            _currentBits = newBits;
+          }
+
+          - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
+            [self applyBits:[self bitsForPoint:[touches.anyObject locationInView:self]]];
+          }
+          - (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
+            [self applyBits:[self bitsForPoint:[touches.anyObject locationInView:self]]];
+          }
+          - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event { [self applyBits:0]; }
+          - (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event { [self applyBits:0]; }
+
+          @end
+          Z3EOF
+          mkdir -p $(dirname Zelda3/App/AppDelegate.m)
+          cat > Zelda3/App/AppDelegate.m <<'Z3EOF'
+          // AppDelegate.m
+          #import "AppDelegate.h"
+          #import "GameViewController.h"
+          #include "Z3Audio.h"
+          #include "Z3Runtime.h"
+
+          @implementation AppDelegate
+
+          - (BOOL)application:(UIApplication *)application
+              didFinishLaunchingWithOptions:(NSDictionary *)opts {
+            self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+            self.window.rootViewController = [[GameViewController alloc] init];
+            [self.window makeKeyAndVisible];
+            return YES;
+          }
+
+          // Pausing on background is the App Store review requirement (no audio/CPU use
+          // while suspended) as well as the simplest way to avoid the game thread
+          // fighting the OS for CPU right as it is about to be frozen mid-frame.
+          - (void)applicationDidEnterBackground:(UIApplication *)application {
+            Z3Runtime_SetPaused(1);
+            Z3Audio_Stop();
+          }
+
+          - (void)applicationWillEnterForeground:(UIApplication *)application {
+            Z3Audio_Start();
+            Z3Runtime_SetPaused(0);
+          }
+
+          @end
+
+          int main(int argc, char *argv[]) {
+            @autoreleasepool {
+              return UIApplicationMain(argc, argv, nil, NSStringFromClass([AppDelegate class]));
+            }
+          }
+          Z3EOF
+          mkdir -p $(dirname Zelda3/Platform/Z3Audio.m)
+          cat > Zelda3/Platform/Z3Audio.m <<'Z3EOF'
+          // Z3Audio.m
+          #import <Foundation/Foundation.h>
+          #import <AudioToolbox/AudioToolbox.h>
+          #include "Z3Audio.h"
+          #include "Z3Runtime.h"
+
+          // 3 buffers x ~23ms @44.1kHz stereo: enough slack that the callback (which
+          // calls into the engine's ZeldaApuLock()) is not on the critical path of
+          // every single vsync, but still short enough that pause/resume feels snappy.
+          enum { kNumAudioBuffers = 3, kFramesPerBuffer = 1024 };
+
+          static AudioQueueRef g_queue;
+          static BOOL g_running;
+
+          static void FillBuffer(AudioQueueBufferRef buf) {
+            int frames = kFramesPerBuffer;
+            buf->mAudioDataByteSize = (UInt32)(frames * 2 * sizeof(int16_t));
+            Z3Runtime_RenderAudio((int16_t *)buf->mAudioData, frames);
+          }
+
+          static void AudioCallback(void *inUserData, AudioQueueRef queue, AudioQueueBufferRef buf) {
+            (void)inUserData;
+            FillBuffer(buf);
+            AudioQueueEnqueueBuffer(queue, buf, 0, NULL);
+          }
+
+          // iOS 5 has no AVAudioSessionInterruptionNotification (iOS 6+); the C Audio
+          // Session API works from 2.0 on and delivers interruptions through a callback.
+          static BOOL g_sessionInited;
+
+          static void InterruptionListener(void *inClientData, UInt32 inInterruptionState) {
+            (void)inClientData;
+            if (inInterruptionState == kAudioSessionBeginInterruption) Z3Audio_HandleInterruptionBegan();
+            else if (inInterruptionState == kAudioSessionEndInterruption) Z3Audio_HandleInterruptionEnded();
+          }
+
+          static BOOL ConfigureSession(void) {
+            if (!g_sessionInited) {
+              OSStatus s = AudioSessionInitialize(NULL, NULL, InterruptionListener, NULL);
+              if (s != noErr && s != kAudioSessionAlreadyInitialized) {
+                NSLog(@"Z3Audio: AudioSessionInitialize failed: %d", (int)s);
+                return NO;
+              }
+              g_sessionInited = YES;
+            }
+            // Ambient: honours the silent switch and mixes with other audio, like a game should.
+            UInt32 category = kAudioSessionCategory_AmbientSound;
+            AudioSessionSetProperty(kAudioSessionProperty_AudioCategory, sizeof(category), &category);
+            OSStatus s = AudioSessionSetActive(true);
+            if (s != noErr) { NSLog(@"Z3Audio: AudioSessionSetActive failed: %d", (int)s); return NO; }
+            return YES;
+          }
+
+          int Z3Audio_Start(void) {
+            if (g_running) return 0;
+            if (!ConfigureSession()) return -1;
+
+            AudioStreamBasicDescription fmt = {0};
+            fmt.mSampleRate = Z3Runtime_AudioSampleRate();
+            fmt.mFormatID = kAudioFormatLinearPCM;
+            fmt.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked;
+            fmt.mBitsPerChannel = 16;
+            fmt.mChannelsPerFrame = 2;
+            fmt.mBytesPerFrame = 2 * sizeof(int16_t);
+            fmt.mFramesPerPacket = 1;
+            fmt.mBytesPerPacket = fmt.mBytesPerFrame;
+
+            // NULL run loop: AudioQueue spins its own internal thread for the callback.
+            // Passing CFRunLoopGetMain() here is a known cause of multi-second hangs in
+            // AudioQueueStop() (observed and fixed upstream in VLC's audioqueue output).
+            OSStatus st = AudioQueueNewOutput(&fmt, AudioCallback, NULL, NULL, NULL, 0, &g_queue);
+            if (st != noErr) { g_queue = NULL; return (int)st; }
+
+            for (int i = 0; i < kNumAudioBuffers; i++) {
+              AudioQueueBufferRef buf;
+              st = AudioQueueAllocateBuffer(g_queue, kFramesPerBuffer * 2 * sizeof(int16_t), &buf);
+              if (st != noErr) { AudioQueueDispose(g_queue, true); g_queue = NULL; return (int)st; }
+              FillBuffer(buf);
+              AudioQueueEnqueueBuffer(g_queue, buf, 0, NULL);
+            }
+
+            st = AudioQueueStart(g_queue, NULL);
+            if (st != noErr) { AudioQueueDispose(g_queue, true); g_queue = NULL; return (int)st; }
+            g_running = YES;
+            return 0;
+          }
+
+          void Z3Audio_Stop(void) {
+            if (!g_queue) return;
+            // Synchronous stop (true): safe here because we are called from the main
+            // thread, never from AudioCallback itself, and the callback runs on
+            // AudioQueue's own thread (see the NULL run loop above), so there is no
+            // self-deadlock risk.
+            AudioQueueStop(g_queue, true);
+            AudioQueueDispose(g_queue, true);
+            g_queue = NULL;
+            g_running = NO;
+          }
+
+          void Z3Audio_HandleInterruptionBegan(void) {
+            if (g_queue) AudioQueuePause(g_queue);
+          }
+
+          void Z3Audio_HandleInterruptionEnded(void) {
+            if (!g_queue) return;
+            if (ConfigureSession()) AudioQueueStart(g_queue, NULL);
+          }
+          Z3EOF
+          mkdir -p $(dirname Zelda3/Platform/Z3View.m)
+          cat > Zelda3/Platform/Z3View.m <<'Z3EOF'
+          // Z3View.m -- GLES2 presentation path.
+          //
+          // Pipeline per frame:
+          //   1. Z3Runtime_AcquireFrame() hands us a HELD buffer (pixels stay valid
+          //      until we call Z3Runtime_ReleaseFrame()).
+          //   2. glTexSubImage2D uploads it into a single persistent RGBA8 texture.
+          //   3. Z3Runtime_ReleaseFrame() -- we've copied the bytes into GPU memory,
+          //      so the CPU-side buffer can go back to the pool immediately. No
+          //      release-callback bookkeeping is needed here (unlike the old
+          //      CGDataProvider path, which had to keep the buffer alive until Core
+          //      Animation was truly done compositing it, possibly frames later).
+          //   4. Draw one textured quad, letterboxed to preserve aspect ratio.
+          //   5. -[EAGLContext presentRenderbuffer:] swaps to screen directly --
+          //      no CALayer.contents hand-off, no render-server compositing step.
+          #import "Z3View.h"
+          #import <QuartzCore/QuartzCore.h>
+          #import <OpenGLES/ES2/gl.h>
+          #import <OpenGLES/ES2/glext.h>
+
+          // GL_UNPACK_ROW_LENGTH doesn't exist in ES2 core; it's exposed via the
+          // GL_EXT_unpack_subimage extension as GL_UNPACK_ROW_LENGTH_EXT (same enum
+          // value as desktop GL / ES3's GL_UNPACK_ROW_LENGTH: 0x0CF2).
+          #ifndef GL_UNPACK_ROW_LENGTH_EXT
+          #define GL_UNPACK_ROW_LENGTH_EXT 0x0CF2
+          #endif
+          #include "Z3Runtime.h"
+
+          @implementation Z3View {
+            EAGLContext *_context;
+            CADisplayLink *_displayLink;
+
+            GLuint _program;
+            GLuint _texture;
+            GLuint _vbo;
+            GLint _aPosition, _aTexCoord, _uTexture, _uTexSize, _uScale;
+
+            GLuint _framebuffer, _colorRenderbuffer;
+            GLint _fbWidth, _fbHeight;
+
+            uint32_t _lastSerial;
+            int _gameW, _gameH;      // last uploaded frame's logical size
+            int _texW, _texH;        // allocated texture size (>= game size, only grows)
+            BOOL _layoutDirty;
+          }
+
+          + (Class)layerClass { return [CAEAGLLayer class]; }
+
+          - (instancetype)initWithFrame:(CGRect)frame {
+            if ((self = [super initWithFrame:frame])) {
+              self.backgroundColor = [UIColor blackColor];
+
+              CAEAGLLayer *eaglLayer = (CAEAGLLayer *)self.layer;
+              eaglLayer.opaque = YES;
+              eaglLayer.drawableProperties = @{
+                kEAGLDrawablePropertyRetainedBacking : [NSNumber numberWithBool:NO],
+                kEAGLDrawablePropertyColorFormat : kEAGLColorFormatRGBA8
+              };
+              // Matches the physical pixel grid exactly: this is a nearest-neighbor
+              // pixel-art blit, so we want integer-ish sampling, not extra
+              // interpolation from an over-scaled drawable.
+              self.contentScaleFactor = [UIScreen mainScreen].scale;
+
+              _context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+              if (!_context) {
+                NSLog(@"Z3View: failed to create GLES2 context");
+                return self;
+              }
+              [self setupGL];
+            }
+            return self;
+          }
+
+          - (void)dealloc {
+            [self stop];
+            [self teardownGL];
+          }
+
+          #pragma mark - GL setup
+
+          static GLuint CompileShader(GLenum type, const char *src) {
+            GLuint s = glCreateShader(type);
+            glShaderSource(s, 1, &src, NULL);
+            glCompileShader(s);
+            GLint ok = 0;
+            glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+            if (!ok) {
+              char log[512];
+              glGetShaderInfoLog(s, sizeof(log), NULL, log);
+              NSLog(@"Z3View: shader compile error: %s", log);
+            }
+            return s;
+          }
+
+          - (void)setupGL {
+            [EAGLContext setCurrentContext:_context];
+
+            static const char *kVertexSrc =
+                "attribute vec2 aPosition;\n"
+                "attribute vec2 aTexCoord;\n"
+                "varying vec2 vTexCoord;\n"
+                "void main() {\n"
+                "  gl_Position = vec4(aPosition, 0.0, 1.0);\n"
+                "  vTexCoord = aTexCoord;\n"
+                "}\n";
+            // "Sharp bilinear": nearest-looking pixels at integer scale, smooth only at
+            // pixel edges for non-integer scales. Plain GL_NEAREST showed horizontal
+            // banding on the iPad's non-integer scale factor. highp is available in
+            // fragment shaders on SGX535/543 (iPhone 3GS/4/4S, iPad 1/2).
+            static const char *kFragmentSrc =
                 "precision highp float;\n"
                 "varying vec2 vTexCoord;\n"
                 "uniform sampler2D uTexture;\n"
@@ -115,84 +845,695 @@ jobs:
                 "  gl_FragColor = vec4(texture2D(uTexture, uv).bgr, 1.0);\n"
                 "}\n";
 
-          ''' + s[b:]
+            GLuint vs = CompileShader(GL_VERTEX_SHADER, kVertexSrc);
+            GLuint fs = CompileShader(GL_FRAGMENT_SHADER, kFragmentSrc);
+            _program = glCreateProgram();
+            glAttachShader(_program, vs);
+            glAttachShader(_program, fs);
+            glLinkProgram(_program);
+            GLint linked = 0;
+            glGetProgramiv(_program, GL_LINK_STATUS, &linked);
+            if (!linked) {
+              char log[512];
+              glGetProgramInfoLog(_program, sizeof(log), NULL, log);
+              NSLog(@"Z3View: program link error: %s", log);
+            }
+            glDeleteShader(vs);
+            glDeleteShader(fs);
 
-          rep('GLint _aPosition, _aTexCoord, _uTexture;',
-              'GLint _aPosition, _aTexCoord, _uTexture, _uTexSize, _uScale;', 'ivars')
-          rep('  _uTexture = glGetUniformLocation(_program, "uTexture");',
-              '  _uTexture = glGetUniformLocation(_program, "uTexture");\n'
-              '  _uTexSize = glGetUniformLocation(_program, "uTexSize");\n'
-              '  _uScale = glGetUniformLocation(_program, "uScale");', 'uniform locs')
-          rep('glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);',
-              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);', 'min filter')
-          rep('glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);',
-              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);', 'mag filter')
-          rep('  glUniform1i(_uTexture, 0);',
-              '  glUniform1i(_uTexture, 0);\n'
-              '  glUniform2f(_uTexSize, (GLfloat)_texW, (GLfloat)_texH);\n'
-              '  GLfloat scx = (GLfloat)_fbWidth * sx / (GLfloat)_gameW;\n'
-              '  GLfloat scy = (GLfloat)_fbHeight * sy / (GLfloat)_gameH;\n'
-              '  glUniform2f(_uScale, scx < 1.0f ? 1.0f : scx, scy < 1.0f ? 1.0f : scy);',
-              'uniform set')
+            _aPosition = glGetAttribLocation(_program, "aPosition");
+            _aTexCoord = glGetAttribLocation(_program, "aTexCoord");
+            _uTexture = glGetUniformLocation(_program, "uTexture");
+            _uTexSize = glGetUniformLocation(_program, "uTexSize");
+            _uScale = glGetUniformLocation(_program, "uScale");
 
-          if crlf:
-              s = s.replace('\n', '\r\n')
-          open(p, 'w', newline='').write(s)
-          print('Z3View.m patched OK')
-          PYEOF
-          grep -c 'uScale' Zelda3/Platform/Z3View.m
+            glGenBuffers(1, &_vbo);
 
-      - name: Patch for iOS 7 (deployment target, alert fallback)
-        run: |
-          sed -i 's/^TARGET := iphone:clang:9.3:9.3/TARGET := iphone:clang:9.3:7.0/' Makefile
-          sed -i 's/firmware (>= 9.3)/firmware (>= 7.0)/' control
-          python3 - <<'PYEOF'
-          import re, sys
+            glGenTextures(1, &_texture);
+            glBindTexture(GL_TEXTURE_2D, _texture);
+            // Nearest-neighbor: this is a pixel-art SNES framebuffer; linear filtering
+            // would blur it at the non-integer scale factors a phone/tablet screen gives.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-          def load(p):
-              raw = open(p, newline='').read()
-              return ('\r\n' in raw), raw.replace('\r\n', '\n')
+            glGenFramebuffers(1, &_framebuffer);
+            glGenRenderbuffers(1, &_colorRenderbuffer);
+          }
 
-          def save(p, s, crlf):
-              open(p, 'w', newline='').write(s.replace('\n', '\r\n') if crlf else s)
+          - (void)teardownGL {
+            if (!_context) return;
+            [EAGLContext setCurrentContext:_context];
+            if (_texture) glDeleteTextures(1, &_texture);
+            if (_vbo) glDeleteBuffers(1, &_vbo);
+            if (_program) glDeleteProgram(_program);
+            if (_colorRenderbuffer) glDeleteRenderbuffers(1, &_colorRenderbuffer);
+            if (_framebuffer) glDeleteFramebuffers(1, &_framebuffer);
+            [EAGLContext setCurrentContext:nil];
+          }
 
-          p = 'Resources/Info.plist'
-          crlf, s = load(p)
-          s, n = re.subn(r'(<key>MinimumOSVersion</key>\s*<string>)9\.3(</string>)',
-                         r'\g<1>7.0\g<2>', s)
-          if n != 1:
-              sys.exit('PATCH FAILED (MinimumOSVersion)')
-          save(p, s, crlf)
+          // (Re)binds the color renderbuffer to this layer's drawable storage. Must
+          // run whenever the view's bounds or contentScaleFactor change, and once
+          // before the first frame.
+          - (void)updateDrawable {
+            [EAGLContext setCurrentContext:_context];
+            glBindRenderbuffer(GL_RENDERBUFFER, _colorRenderbuffer);
+            [_context renderbufferStorage:GL_RENDERBUFFER fromDrawable:(CAEAGLLayer *)self.layer];
+            glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_fbWidth);
+            glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_fbHeight);
 
-          p = 'Zelda3/App/GameViewController.m'
-          crlf, s = load(p)
-          a = s.index('- (void)showFatalAlert:(NSString *)message {')
-          b = s.index('- (void)buildTouchOverlay')
-          new_fn = '\n'.join([
-              '- (void)showFatalAlert:(NSString *)message {',
-              '#pragma clang diagnostic push',
-              '#pragma clang diagnostic ignored "-Wunguarded-availability"',
-              '#pragma clang diagnostic ignored "-Wunguarded-availability-new"',
-              '#pragma clang diagnostic ignored "-Wdeprecated-declarations"',
-              '  if (NSClassFromString(@"UIAlertController")) {',
-              '    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Zelda3 crashed"',
-              '        message:message preferredStyle:UIAlertControllerStyleAlert];',
-              '    [ac addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];',
-              '    [self presentViewController:ac animated:YES completion:nil];',
-              '  } else {',
-              '    // iOS 7: no UIAlertController.',
-              '    UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"Zelda3 crashed" message:message',
-              '        delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];',
-              '    [av show];',
-              '  }',
-              '#pragma clang diagnostic pop',
-              '}',
-              '', ''])
-          s = s[:a] + new_fn + s[b:]
-          save(p, s, crlf)
-          print('iOS 7 patch OK')
-          PYEOF
-          grep -n '^TARGET' Makefile
+            glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _colorRenderbuffer);
+
+            GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE) {
+              NSLog(@"Z3View: incomplete framebuffer (0x%x)", status);
+            }
+            _layoutDirty = NO;
+          }
+
+          - (void)layoutSubviews {
+            [super layoutSubviews];
+            _layoutDirty = YES;
+          }
+
+          #pragma mark - Start/stop
+
+          - (void)start {
+            [self stop];
+            _lastSerial = 0;
+            _layoutDirty = YES;
+            _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+            // iOS 9.3 has no useful preferredFramesPerSecond throttling here: fire
+            // every vsync and let the serial check make a no-op tick cheap.
+            [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+          }
+
+          - (void)stop {
+            [_displayLink invalidate];
+            _displayLink = nil;
+          }
+
+          #pragma mark - Per-frame
+
+          - (void)uploadFrame:(const Z3Frame *)f {
+            [EAGLContext setCurrentContext:_context];
+            glBindTexture(GL_TEXTURE_2D, _texture);
+
+            // GL_UNPACK_ROW_LENGTH lets us upload directly from Z3Runtime's buffer at
+            // its real pitch, in pixels, without a packing copy first -- pitch is
+            // documented as bytes/row and every row in this engine is 4-byte BGRA, so
+            // pitch/4 is exact.
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);  // ES2 has no ROW_LENGTH; pitch == width*4 (see Z3Runtime_Prepare)
+
+            if (f->width != _texW || f->height != _texH) {
+              // Only grows/reallocates on a real geometry change (e.g. extended
+              // aspect ratio or 240-line toggle), not every frame.
+              _texW = f->width;
+              _texH = f->height;
+              glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, _texW, _texH, 0,
+                           GL_RGBA, GL_UNSIGNED_BYTE, f->pixels);
+            } else {
+              glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, f->width, f->height,
+                               GL_RGBA, GL_UNSIGNED_BYTE, f->pixels);
+            }
+
+            if (f->width != _gameW || f->height != _gameH) {
+              _gameW = f->width;
+              _gameH = f->height;
+            }
+          }
+
+          - (void)drawFrame {
+            if (_layoutDirty) [self updateDrawable];
+            if (_fbWidth <= 0 || _fbHeight <= 0 || _gameW <= 0 || _gameH <= 0) return;
+
+            glBindFramebuffer(GL_FRAMEBUFFER, _framebuffer);
+            glViewport(0, 0, _fbWidth, _fbHeight);
+            glClearColor(0, 0, 0, 1);
+            glDisable(GL_BLEND);
+            glDisable(GL_DITHER);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            // Aspect-correct letterbox, same math as the old CALayer path.
+            CGFloat viewAspect = (CGFloat)_fbWidth / (CGFloat)_fbHeight;
+            CGFloat gameAspect = (CGFloat)_gameW / (CGFloat)_gameH;
+            CGFloat sx = 1.0f, sy = 1.0f;
+            if (viewAspect > gameAspect) {
+              sx = gameAspect / viewAspect;
+            } else {
+              sy = viewAspect / gameAspect;
+            }
+
+            // Two triangles as a strip, position (clip space) + texcoord.
+            // Texture is stored top-row-first from the engine; flip V so it's not
+            // upside down on screen (GL's texture origin is bottom-left).
+            const GLfloat verts[] = {
+              // x,      y,      u,    v
+              -sx,  sy,   0.0f, 0.0f,
+              -sx, -sy,   0.0f, 1.0f,
+               sx,  sy,   1.0f, 0.0f,
+               sx, -sy,   1.0f, 1.0f,
+            };
+
+            glBindBuffer(GL_ARRAY_BUFFER, _vbo);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
+
+            glUseProgram(_program);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, _texture);
+            glUniform1i(_uTexture, 0);
+            glUniform2f(_uTexSize, (GLfloat)_texW, (GLfloat)_texH);
+            GLfloat scx = (GLfloat)_fbWidth * sx / (GLfloat)_gameW;
+            GLfloat scy = (GLfloat)_fbHeight * sy / (GLfloat)_gameH;
+            glUniform2f(_uScale, scx < 1.0f ? 1.0f : scx, scy < 1.0f ? 1.0f : scy);
+
+            glEnableVertexAttribArray(_aPosition);
+            glVertexAttribPointer(_aPosition, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), (void *)0);
+            glEnableVertexAttribArray(_aTexCoord);
+            glVertexAttribPointer(_aTexCoord, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), (void *)(2 * sizeof(GLfloat)));
+
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+            glBindRenderbuffer(GL_RENDERBUFFER, _colorRenderbuffer);
+            [_context presentRenderbuffer:GL_RENDERBUFFER];
+          }
+
+          - (void)tick:(CADisplayLink *)link {
+            (void)link;
+            Z3Frame f;
+            if (Z3Runtime_AcquireFrame(_lastSerial, &f)) {
+              _lastSerial = f.serial;
+              [self uploadFrame:&f];
+              // Bytes are already copied into the GPU texture by uploadFrame:, so the
+              // engine-owned buffer can be recycled immediately -- no need to hold it
+              // until a compositor finishes reading it, unlike the old CGImage path.
+              Z3Runtime_ReleaseFrame(f.handle);
+            }
+            // Redraw every vsync even if no new frame arrived yet, so the letterbox
+            // stays correct across rotation/resizes and the drawable is never left
+            // showing a stale/garbage buffer after a layout change.
+            [self drawFrame];
+          }
+
+          #pragma mark - Touch mapping
+
+          - (CGPoint)viewPointToGameUnit:(CGPoint)pt {
+            if (_gameW <= 0 || _gameH <= 0 || self.bounds.size.width <= 0 || self.bounds.size.height <= 0) {
+              return CGPointMake(-1, -1);
+            }
+            CGRect b = self.bounds;
+            CGFloat viewAspect = b.size.width / b.size.height;
+            CGFloat gameAspect = (CGFloat)_gameW / (CGFloat)_gameH;
+            CGRect f;
+            if (viewAspect > gameAspect) {
+              f.size.height = b.size.height;
+              f.size.width = b.size.height * gameAspect;
+            } else {
+              f.size.width = b.size.width;
+              f.size.height = b.size.width / gameAspect;
+            }
+            f.origin.x = b.origin.x + (b.size.width - f.size.width) * 0.5;
+            f.origin.y = b.origin.y + (b.size.height - f.size.height) * 0.5;
+
+            CGFloat ux = (pt.x - f.origin.x) / f.size.width;
+            CGFloat uy = (pt.y - f.origin.y) / f.size.height;
+            return CGPointMake(ux, uy);
+          }
+
+          @end
+          Z3EOF
+          mkdir -p $(dirname Zelda3/Platform/Z3Runtime.m)
+          cat > Zelda3/Platform/Z3Runtime.m <<'Z3EOF'
+          // Z3Runtime.m -- see Z3Runtime.h for the threading model.
+          #import <Foundation/Foundation.h>
+          #include <pthread.h>
+          #include <stdatomic.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+          #include <sys/stat.h>
+          #include <mach/mach_time.h>
+
+          #include "Z3Runtime.h"
+
+          #include "src/types.h"
+          #include "src/variables.h"
+          #include "src/zelda_rtl.h"
+          #include "src/config.h"
+          #include "src/assets.h"
+          #include "src/load_gfx.h"
+          #include "src/util.h"
+          #include "src/audio.h"
+          #include "snes/ppu.h"
+          #include "snes/dma.h"
+
+          // ---------------------------------------------------------------------------
+          // Engine-facing contract (the only symbols the emulator-free core needs)
+          // ---------------------------------------------------------------------------
+          const uint8 *g_asset_ptrs[kNumberOfAssets];
+          uint32 g_asset_sizes[kNumberOfAssets];
+
+          MemBlk FindInAssetArray(int asset, int idx) {
+            return FindIndexInMemblk((MemBlk){ g_asset_ptrs[asset], g_asset_sizes[asset] }, idx);
+          }
+
+          // Recursive: the engine takes ZeldaApuLock() internally while callers here may
+          // already hold it (same nesting the desktop main.c has).
+          static pthread_mutex_t g_apu_mutex;
+          static pthread_once_t g_apu_mutex_once = PTHREAD_ONCE_INIT;
+          static void InitApuMutex(void) {
+            pthread_mutexattr_t a;
+            pthread_mutexattr_init(&a);
+            pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
+            pthread_mutex_init(&g_apu_mutex, &a);
+            pthread_mutexattr_destroy(&a);
+          }
+          void ZeldaApuLock(void)   { pthread_once(&g_apu_mutex_once, InitApuMutex); pthread_mutex_lock(&g_apu_mutex); }
+          void ZeldaApuUnlock(void) { pthread_mutex_unlock(&g_apu_mutex); }
+
+          static Z3FatalHandler g_fatal_handler;
+          void Z3Runtime_SetFatalHandler(Z3FatalHandler h) { g_fatal_handler = h; }
+
+          void NORETURN Die(const char *error) {
+            fprintf(stderr, "Zelda3 fatal: %s\n", error);
+            if (g_fatal_handler) g_fatal_handler(error);
+            // Handler is expected not to return; if it does, park this thread instead of
+            // exit()ing from a background thread (which raced the alert in the old port).
+            for (;;) sleep(3600);
+          }
+
+          // ---------------------------------------------------------------------------
+          // Runtime state
+          // ---------------------------------------------------------------------------
+          // Buffer ownership (model-checked; a naive "showing/latest" scheme was found to let the
+          // game overwrite an image Core Animation was still reading):
+          //   FREE    - nobody uses it; only FREE buffers may be written
+          //   WRITING - the game thread is drawing into it (at most one)
+          //   READY   - newest finished frame, waiting for the UI (at most one; superseded ones go FREE)
+          //   HELD    - owned by a CGImage/Core Animation until its provider release callback fires
+          enum { kNumBuffers = 4 };
+          enum { kBufFree = 0, kBufWriting, kBufReady, kBufHeld };
+
+          static struct {
+            uint8_t *buf[kNumBuffers];   // ARGB8888
+            int width, height;
+            size_t pitch;
+            int render_scale_alloc;      // 1 or 4 (allocated per-pixel scale)
+
+            pthread_mutex_t buf_lock;    // guards buf_state / ready_index; held only for a few instructions
+            int buf_state[kNumBuffers];
+            int ready_index;             // -1 = none
+            _Atomic uint32_t latest_serial;
+            uint32_t skipped_frames;     // frames not drawn because no FREE buffer existed (stat)
+
+            _Atomic uint32_t buttons;
+            _Atomic int paused;
+            _Atomic int running;
+            _Atomic int stop_requested;
+            _Atomic int pending_cmd;     // 0 none, 1 save, 2 load, 3 reset
+            _Atomic int pending_slot;
+
+            int audio_rate;
+            int audio_channels;
+            int frames_per_block;        // engine block size (534 * rate / 32000)
+            int16_t *audio_block;
+            int audio_block_cur, audio_block_len; // in int16 units
+
+            uint32 ppu_render_flags;
+            pthread_t thread;
+            int thread_started;
+            int prepared;
+          } g;
+
+          static uint64_t NowNs(void) {
+            static mach_timebase_info_data_t tb;
+            if (tb.denom == 0) mach_timebase_info(&tb);
+            return mach_absolute_time() * tb.numer / tb.denom;
+          }
+
+          // ---------------------------------------------------------------------------
+          // Asset loading (logic taken verbatim from the desktop main.c LoadAssets)
+          // ---------------------------------------------------------------------------
+          static int LoadAssetsFrom(const char *docs, const char *bundle, char *err, size_t err_size) {
+            char path[1024];
+            size_t length = 0;
+            uint8 *data = NULL;
+
+            snprintf(path, sizeof(path), "%s/zelda3_assets.dat", docs);
+            data = ReadWholeFile(path, &length);
+
+            if (!data) {
+              snprintf(path, sizeof(path), "%s/zelda3_assets.bps", bundle);
+              size_t bps_len = 0;
+              uint8 *bps = ReadWholeFile(path, &bps_len);
+              if (!bps) { snprintf(err, err_size, "Missing zelda3_assets.bps in app bundle."); return 1; }
+
+              snprintf(path, sizeof(path), "%s/zelda3.sfc", docs);
+              size_t rom_len = 0;
+              uint8 *rom = ReadWholeFile(path, &rom_len);
+              if (!rom) {
+                free(bps);
+                snprintf(err, err_size, "ROM not found. Copy zelda3.sfc (US) into the app via iTunes File Sharing.");
+                return 2;
+              }
+              // Many dumps (.smc) carry a 512-byte copier header; the BPS expects exactly
+              // 1 MiB (CRC32 777aac2f). Strip the header when the size says it is present.
+              uint8 *rom_body = rom;
+              if (rom_len == 1048576 + 512) { rom_body = rom + 512; rom_len -= 512; }
+              data = ApplyBps(rom_body, rom_len, bps, bps_len, &length);
+              free(rom); free(bps);
+              if (!data) {
+                snprintf(err, err_size, "This ROM does not match. A US 'zelda3.sfc' (no header) is required.");
+                return 3;
+              }
+              // Cache the extracted assets so the ROM is not needed again (as upstream does).
+              snprintf(path, sizeof(path), "%s/zelda3_assets.dat", docs);
+              FILE *f = fopen(path, "wb");
+              if (f) { fwrite(data, 1, length, f); fclose(f); }
+            }
+
+            static const char kAssetsSig[] = { kAssets_Sig };
+            if (length < 16 + 32 + 32 + 8 + kNumberOfAssets * 4 ||
+                memcmp(data, kAssetsSig, 48) != 0 ||
+                memcmp(data + 80, &(uint32){ kNumberOfAssets }, 4) != 0) {
+              snprintf(err, err_size, "Invalid assets file (wrong version?).");
+              return 4;
+            }
+
+            // NOTE: the desktop code dereferences these as *(uint32*) directly. Asset blobs
+            // start at arbitrary byte offsets, so on armv7 use memcpy for the header reads.
+            uint32 hdr84; memcpy(&hdr84, data + 84, 4);
+            uint32 offset = 88 + kNumberOfAssets * 4 + hdr84;
+            for (size_t i = 0; i < kNumberOfAssets; i++) {
+              uint32 size; memcpy(&size, data + 88 + i * 4, 4);
+              offset = (offset + 3) & ~3u;
+              if ((uint64)offset + size > length) { snprintf(err, err_size, "Assets file is corrupt."); return 5; }
+              g_asset_sizes[i] = size;
+              g_asset_ptrs[i]  = data + offset;
+              offset += size;
+            }
+            return 0;
+          }
+
+          // ---------------------------------------------------------------------------
+          // Prepare / Start / Stop
+          // ---------------------------------------------------------------------------
+          int Z3Runtime_Prepare(const char *documents_dir, const char *bundle_dir, char *err, size_t err_size) {
+            if (g.prepared) return 0;
+            err[0] = 0;
+
+            // The engine reads zelda3.user.ini / zelda3.ini and writes saves/ relative to cwd.
+            mkdir(documents_dir, 0755);
+            if (chdir(documents_dir) != 0) { snprintf(err, err_size, "Cannot enter Documents."); return 10; }
+            mkdir("saves", 0755);
+
+            // Seed a mobile-tuned config on first run; never overwrite a user's edits.
+            char src[1024], dst[1024];
+            snprintf(dst, sizeof(dst), "%s/zelda3.ini", documents_dir);
+            if (access(dst, F_OK) != 0) {
+              snprintf(src, sizeof(src), "%s/zelda3.ios.ini", bundle_dir);
+              NSData *d = [NSData dataWithContentsOfFile:[NSString stringWithUTF8String:src]];
+              if (d) [d writeToFile:[NSString stringWithUTF8String:dst] atomically:YES];
+            }
+
+            ParseConfigFile(NULL);
+
+            int rc = LoadAssetsFrom(documents_dir, bundle_dir, err, err_size);
+            if (rc) return rc;
+
+            ZeldaInitialize();
+            g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
+            g.width  = g_config.extended_aspect_ratio * 2 + 256;
+            g.height = g_config.extend_y ? 240 : 224;
+
+            g_wanted_zelda_features = g_config.features0;
+            // 4x4 mode-7 is forced off: 1024x896 output is far beyond an A5/A6 budget.
+            g.ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
+                                 g_config.extend_y * kPpuRenderFlags_Height240 |
+                                 g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
+            g.render_scale_alloc = 1;
+
+            ZeldaEnableMsu(0);  // MSU needs Opus, which this port does not ship.
+            ZeldaSetLanguage(g_config.language);
+
+            g.pitch = (size_t)g.width * 4;
+            for (int i = 0; i < kNumBuffers; i++) {
+              g.buf[i] = calloc(g.pitch * g.height, 1);
+              if (!g.buf[i]) { snprintf(err, err_size, "Out of memory."); return 11; }
+            }
+            pthread_mutex_init(&g.buf_lock, NULL);
+            for (int i = 0; i < kNumBuffers; i++) g.buf_state[i] = kBufFree;
+            g.ready_index = -1;
+
+            g.audio_rate = 44100;
+            g.audio_channels = 2;
+            g.frames_per_block = (534 * g.audio_rate) / 32000;
+            g.audio_block = calloc((size_t)g.frames_per_block * g.audio_channels, sizeof(int16_t));
+            g.audio_block_cur = g.audio_block_len = 0;
+
+            ZeldaReadSram();
+            if (g_config.autosave) SaveLoadSlot(kSaveLoad_Load, 0);
+
+            g.prepared = 1;
+            return 0;
+          }
+
+          #ifdef Z3_DEBUG_DUMP
+          // DEBUG: writes one raw engine frame as a 32-bit top-down BMP into Documents
+          // (cwd). Lets us tell whether stripes exist in the engine buffer itself or are
+          // introduced later by GL/presentation. Grab it via iTunes File Sharing.
+          static void DumpFrameBmp(const char *name, const uint8_t *px, int w, int h, size_t pitch) {
+            FILE *f = fopen(name, "wb");
+            if (!f) return;
+            uint32_t img = (uint32_t)(w * 4 * h), off = 54, total = off + img;
+            uint8_t hd[54] = {0};
+            hd[0] = 'B'; hd[1] = 'M';
+            memcpy(hd + 2, &total, 4); memcpy(hd + 10, &off, 4);
+            uint32_t v = 40; memcpy(hd + 14, &v, 4);
+            int32_t sw = w, sh = -h; memcpy(hd + 18, &sw, 4); memcpy(hd + 22, &sh, 4);
+            uint16_t pl = 1, bpp = 32; memcpy(hd + 26, &pl, 2); memcpy(hd + 28, &bpp, 2);
+            memcpy(hd + 34, &img, 4);
+            fwrite(hd, 1, 54, f);
+            for (int y = 0; y < h; y++) fwrite(px + (size_t)y * pitch, 1, (size_t)w * 4, f);
+            fclose(f);
+          }
+
+          // DEBUG: dumps PPU/HDMA state that decides how every scanline is drawn.
+          static void DumpPpuState(const char *name) {
+            FILE *f = fopen(name, "w");
+            if (!f) return;
+            Ppu *p = g_zenv.ppu;
+            fprintf(f, "mode=%d forcedBlank=%d brightness=%d renderFlags=%d\n", p->mode, p->forcedBlank, p->brightness, p->renderFlags);
+            fprintf(f, "screenEnabled main=%02x sub=%02x windowed main=%02x sub=%02x\n", p->screenEnabled[0], p->screenEnabled[1], p->screenWindowed[0], p->screenWindowed[1]);
+            fprintf(f, "mosaic en=%d size=%d\n", p->mosaicEnabled, p->mosaicSize);
+            fprintf(f, "clipMode=%d preventMath=%d addSub=%d subColor=%d half=%d mathEn=%02x fixed=%d,%d,%d\n",
+                    p->clipMode, p->preventMathMode, p->addSubscreen, p->subtractColor, p->halfColor, p->mathEnabled,
+                    p->fixedColorR, p->fixedColorG, p->fixedColorB);
+            fprintf(f, "windowsel=%08x w1=%d..%d w2=%d..%d\n", p->windowsel, p->window1left, p->window1right, p->window2left, p->window2right);
+            fprintf(f, "extraLR=%d extraLeftCur=%d extraRightCur=%d extraBottomCur=%d\n", p->extraLeftRight, p->extraLeftCur, p->extraRightCur, p->extraBottomCur);
+            for (int i = 0; i < 8; i++) {
+              DmaChannel *c = &g_zenv.dma->channel[i];
+              fprintf(f, "dma%d hdma=%d dma=%d mode=%d indirect=%d bAdr=%02x aAdr=%04x aBank=%02x indBank=%02x\n",
+                      i, c->hdmaActive, c->dmaActive, c->mode, c->indirect, c->bAdr, c->aAdr, c->aBank, c->indBank);
+            }
+            fprintf(f, "cgram[0..31]:");
+            for (int i = 0; i < 32; i++) fprintf(f, " %04x", p->cgram[i]);
+            fprintf(f, "\nsizeof(Ppu)=%zu sizeof(DmaChannel)=%zu\n", sizeof(Ppu), sizeof(DmaChannel));
+            fclose(f);
+          }
+
+          extern uint16_t g_dbg_objline[5][kPpuXPixels];
+          extern uint8_t g_dbg_objflags[5];
+          extern uint32_t g_dbg_spr[6][48][8];
+          extern uint32_t g_dbg_spr_n[6];
+          extern uint16_t g_dbg_vram_begin[0x400];
+          extern uint16_t g_dbg_vram_l77[0x400];
+          static void DumpBin(const char *name, const void *p, size_t n) {
+            FILE *f = fopen(name, "wb");
+            if (!f) return;
+            fwrite(p, 1, n, f);
+            fclose(f);
+          }
+
+          #endif
+
+          static void *GameThreadMain(void *unused) {
+            (void)unused;
+            pthread_setname_np("zelda3.game");
+            uint64_t next = NowNs();
+            uint32_t frame_ctr = 0;
+            int skip_run = 0;
+
+            while (!atomic_load(&g.stop_requested)) {
+              if (atomic_load(&g.paused)) { usleep(16000); next = NowNs(); continue; }
+
+              // Commands run on the game thread so they never race the frame.
+              int cmd = atomic_exchange(&g.pending_cmd, 0);
+              if (cmd) {
+                int slot = atomic_load(&g.pending_slot);
+                ZeldaApuLock();
+                if (cmd == 1) SaveLoadSlot(kSaveLoad_Save, slot);
+                else if (cmd == 2) SaveLoadSlot(kSaveLoad_Load, slot);
+                else if (cmd == 3) ZeldaReset(true);
+                ZeldaApuUnlock();
+              }
+
+              // Adaptive frame skipping: iPhone 3GS / 4 / iPad 1 (the iOS 5 era A8/A4 parts)
+              // cannot always rasterise a full frame in 16.7 ms. Game logic and audio must
+              // still run every frame, but if we are already more than 10 ms behind schedule
+              // we skip *drawing* this one (never more than 3 in a row, so >= 15 fps shown).
+              int late = NowNs() > next + 10000000ull && skip_run < 3;
+
+              int inputs = (int)atomic_load(&g.buttons);
+              ZeldaApuLock();
+              ZeldaRunFrame(inputs);
+              ZeldaApuUnlock();
+              frame_ctr++;
+
+              // Claim a FREE buffer. If Core Animation still holds every spare one, skip drawing
+              // this frame (game logic and audio already advanced) instead of overwriting a
+              // buffer that is on screen.
+              int wi = -1;
+              if (late) {
+                skip_run++;
+              } else {
+                skip_run = 0;
+                pthread_mutex_lock(&g.buf_lock);
+                for (int i = 0; i < kNumBuffers; i++)
+                  if (g.buf_state[i] == kBufFree) { g.buf_state[i] = kBufWriting; wi = i; break; }
+                pthread_mutex_unlock(&g.buf_lock);
+              }
+
+              if (wi >= 0) {
+                ZeldaDrawPpuFrame(g.buf[wi], g.pitch, g.ppu_render_flags);
+          #ifdef Z3_DEBUG_DUMP
+                if (frame_ctr == 600) { DumpFrameBmp("frame_dump.bmp", g.buf[wi], g.width, g.height, g.pitch); DumpPpuState("frame_state.txt"); DumpBin("poly_buf.bin", g_zenv.ram + 0xE800, 0x800); DumpBin("vram.bin", ppu_getVram(g_zenv.ppu), 0x10000); DumpBin("oam.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); DumpBin("ram_1f00.bin", g_zenv.ram + 0x1F00, 0x100); DumpBin("objline.bin", g_dbg_objline, sizeof(g_dbg_objline)); DumpBin("objflags.bin", g_dbg_objflags, sizeof(g_dbg_objflags)); DumpBin("spr_trace.bin", g_dbg_spr, sizeof(g_dbg_spr)); DumpBin("spr_n.bin", g_dbg_spr_n, sizeof(g_dbg_spr_n)); DumpBin("vram_begin.bin", g_dbg_vram_begin, sizeof(g_dbg_vram_begin)); DumpBin("vram_l77.bin", g_dbg_vram_l77, sizeof(g_dbg_vram_l77)); DumpBin("oam2.bin", g_zenv.ppu->oam, sizeof(g_zenv.ppu->oam)); { uint32_t regs[4] = {g_zenv.ppu->objTileAdr1, g_zenv.ppu->objTileAdr2, g_zenv.ppu->objSize, g_zenv.ppu->renderFlags}; DumpBin("objregs.bin", regs, sizeof(regs)); } }
+          #endif
+                pthread_mutex_lock(&g.buf_lock);
+                if (g.ready_index >= 0) g.buf_state[g.ready_index] = kBufFree;  // superseded, never shown
+                g.buf_state[wi] = kBufReady;
+                g.ready_index = wi;
+                pthread_mutex_unlock(&g.buf_lock);
+                atomic_fetch_add(&g.latest_serial, 1);
+              } else {
+                g.skipped_frames++;   // deliberately skipped (late) or no free buffer
+              }
+
+              // 60 fps pacing with the same 17/17/16 ms cadence as the desktop build.
+              static const uint32_t kDelayMs[3] = { 17, 17, 16 };
+              next += (uint64_t)kDelayMs[frame_ctr % 3] * 1000000ull;
+              uint64_t now = NowNs();
+              if (next > now) {
+                uint64_t d = next - now;
+                if (d > 500000000ull) { next = now; d = 0; }
+                usleep((useconds_t)(d / 1000));
+              } else if (now - next > 500000000ull) {
+                next = now;  // fell far behind: resync instead of fast-forwarding
+              }
+            }
+            atomic_store(&g.running, 0);
+            return NULL;
+          }
+
+          int Z3Runtime_Start(void) {
+            if (!g.prepared || g.thread_started) return -1;
+            atomic_store(&g.stop_requested, 0);
+            atomic_store(&g.running, 1);
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_attr_setstacksize(&attr, 1 << 20);  // engine has deep call chains (sprite/dungeon)
+            int rc = pthread_create(&g.thread, &attr, GameThreadMain, NULL);
+            pthread_attr_destroy(&attr);
+            if (rc != 0) { atomic_store(&g.running, 0); return rc; }
+            g.thread_started = 1;
+            return 0;
+          }
+
+          void Z3Runtime_Stop(void) {
+            if (!g.thread_started) return;
+            atomic_store(&g.stop_requested, 1);
+            pthread_join(g.thread, NULL);
+            g.thread_started = 0;
+            if (g_config.autosave) { ZeldaApuLock(); SaveLoadSlot(kSaveLoad_Save, 0); ZeldaApuUnlock(); }
+            ZeldaWriteSram();
+          }
+
+          // ---------------------------------------------------------------------------
+          // Input / control
+          // ---------------------------------------------------------------------------
+          void Z3Runtime_SetButtons(uint32_t mask) { atomic_store(&g.buttons, mask & 0x0fff); }
+          void Z3Runtime_SetPaused(int p) { atomic_store(&g.paused, p ? 1 : 0); }
+          void Z3Runtime_SaveState(int slot) { atomic_store(&g.pending_slot, slot); atomic_store(&g.pending_cmd, 1); }
+          void Z3Runtime_LoadState(int slot) { atomic_store(&g.pending_slot, slot); atomic_store(&g.pending_cmd, 2); }
+          void Z3Runtime_Reset(void) { atomic_store(&g.pending_cmd, 3); }
+
+          // ---------------------------------------------------------------------------
+          // Video
+          // ---------------------------------------------------------------------------
+          int Z3Runtime_AcquireFrame(uint32_t last_serial, Z3Frame *out) {
+            if (atomic_load(&g.latest_serial) == last_serial) return 0;
+            int idx = -1;
+            pthread_mutex_lock(&g.buf_lock);
+            if (g.ready_index >= 0) {
+              idx = g.ready_index;
+              g.buf_state[idx] = kBufHeld;   // exclusive until Z3Runtime_ReleaseFrame(idx)
+              g.ready_index = -1;
+            }
+            pthread_mutex_unlock(&g.buf_lock);
+            if (idx < 0) return 0;
+            out->pixels = g.buf[idx];
+            out->width = g.width;
+            out->height = g.height;
+            out->pitch = g.pitch;
+            out->serial = atomic_load(&g.latest_serial);
+            out->handle = idx;
+            return 1;
+          }
+
+          // Called from the CGDataProvider release callback (any thread) once Core Animation
+          // no longer reads the pixels.
+          void Z3Runtime_ReleaseFrame(int handle) {
+            if (handle < 0 || handle >= kNumBuffers) return;
+            pthread_mutex_lock(&g.buf_lock);
+            if (g.buf_state[handle] == kBufHeld) g.buf_state[handle] = kBufFree;
+            pthread_mutex_unlock(&g.buf_lock);
+          }
+
+          uint32_t Z3Runtime_SkippedFrames(void) { return g.skipped_frames; }
+
+          // ---------------------------------------------------------------------------
+          // Audio: same block-splitting scheme as the desktop AudioCallback.
+          // ---------------------------------------------------------------------------
+          int Z3Runtime_AudioSampleRate(void) { return 44100; }
+
+          void Z3Runtime_RenderAudio(int16_t *out, int frames) {
+            if (!g.prepared || !atomic_load(&g.running)) {
+              memset(out, 0, (size_t)frames * 2 * sizeof(int16_t));
+              return;
+            }
+            int want = frames * g.audio_channels;   // int16 units
+            while (want > 0) {
+              if (g.audio_block_cur >= g.audio_block_len) {
+                ZeldaRenderAudio(g.audio_block, g.frames_per_block, g.audio_channels);
+                g.audio_block_cur = 0;
+                g.audio_block_len = g.frames_per_block * g.audio_channels;
+              }
+              int n = g.audio_block_len - g.audio_block_cur;
+              if (n > want) n = want;
+              memcpy(out, g.audio_block + g.audio_block_cur, (size_t)n * sizeof(int16_t));
+              g.audio_block_cur += n;
+              out += n;
+              want -= n;
+            }
+            ZeldaApuLock();
+            ZeldaDiscardUnusedAudioFrames();
+            ZeldaApuUnlock();
+          }
+          Z3EOF
+          cp -f Zelda3/Engine/snes/ppu.h snes/ppu.h || true
 
       - name: Build .deb + .app via Theos
         env:
@@ -202,6 +1543,22 @@ jobs:
           make clean
           make package FINALPACKAGE=1
           ls -la packages
+
+      - name: Verify Mach-O is loadable by the iOS 5 dyld
+        run: |
+          export PATH="${{ github.workspace }}/theos/toolchain/linux/iphone/bin:$PATH"
+          BIN="$(find .theos -type f -name Zelda3ARMv7 | head -n1)"
+          echo "Binary: $BIN"
+          OT="$(command -v llvm-otool || command -v otool || true)"
+          if [ -z "$OT" ]; then echo "no otool in toolchain; skipping load-command check"; exit 0; fi
+          "$OT" -l "$BIN" > /tmp/lc.txt
+          # iOS 5 dyld knows LC_VERSION_MIN_IPHONEOS and LC_UNIXTHREAD; it does NOT
+          # know LC_BUILD_VERSION (iOS 12 era) or LC_MAIN (needs iOS 6+).
+          grep -E "LC_VERSION_MIN_IPHONEOS|LC_UNIXTHREAD|LC_MAIN|LC_BUILD_VERSION" /tmp/lc.txt || true
+          grep -q LC_VERSION_MIN_IPHONEOS /tmp/lc.txt || { echo "missing LC_VERSION_MIN_IPHONEOS"; exit 1; }
+          if grep -q LC_BUILD_VERSION /tmp/lc.txt; then echo "LC_BUILD_VERSION present: iOS 5 cannot load this"; exit 1; fi
+          if grep -q "LC_MAIN" /tmp/lc.txt; then echo "LC_MAIN present: iOS 5 cannot load this"; exit 1; fi
+          grep -A3 LC_VERSION_MIN_IPHONEOS /tmp/lc.txt | grep -q "version 5.0" || { echo "deployment target is not 5.0"; exit 1; }
 
       - name: Pack .ipa from staged .app
         run: |
@@ -216,13 +1573,13 @@ jobs:
           fi
           echo "Using APP_DIR=$APP_DIR"
           cp -a "$APP_DIR" ipa_build/Payload/
-          (cd ipa_build && zip -rq ../packages/Zelda3-${{ steps.commit-info.outputs.hash }}-armv7-iOS7.ipa Payload)
+          (cd ipa_build && zip -rq ../packages/Zelda3-${{ steps.commit-info.outputs.hash }}-armv7-iOS5.ipa Payload)
           ls -la packages
 
       - name: Upload .ipa + .deb artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Zelda3-armv7-iOS7-${{ steps.commit-info.outputs.hash }}
+          name: Zelda3-armv7-iOS5-${{ steps.commit-info.outputs.hash }}
           path: |
             packages/*.ipa
             packages/*.deb
