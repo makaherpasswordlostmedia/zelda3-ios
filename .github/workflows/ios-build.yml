@@ -113,6 +113,11 @@ jobs:
           	-Wno-error=deprecated-non-prototype -Wno-deprecated-non-prototype \
           	-mno-unaligned-access -fno-strict-aliasing -fwrapv
 
+          # ARC for every file (-fobjc-arc is ignored for plain C). Theos only honours per-file flags
+          # spelled "<file>_CFLAGS"; the old "<file>_FILE_FLAGS" lines below were silently ignored,
+          # which is why Z3View.m used to build without ARC.
+          Zelda3ARMv7_CFLAGS += -fobjc-arc
+
           Zelda3ARMv7_FILES = \
           	Zelda3/Engine/src/ancilla.c \
           	Zelda3/Engine/src/attract.c \
@@ -165,12 +170,6 @@ jobs:
           # ARC only for the ObjC platform/app files; the engine core and bus_stubs.c
           # are plain C and unaffected by this flag either way, but being explicit here
           # avoids ever silently ARC-ifying a future .m file added to the engine tree.
-          Zelda3/Platform/Z3Runtime.m_FILE_FLAGS = -fobjc-arc
-          Zelda3/Platform/Z3View.m_FILE_FLAGS = -fobjc-arc
-          Zelda3/Platform/Z3Audio.m_FILE_FLAGS = -fobjc-arc
-          Zelda3/App/AppDelegate.m_FILE_FLAGS = -fobjc-arc
-          Zelda3/App/GameViewController.m_FILE_FLAGS = -fobjc-arc
-          Zelda3/App/TouchButton.m_FILE_FLAGS = -fobjc-arc
 
           # Third-party (unmodified libopus, stripped-decoder build): the amalgam
           # includes an internal encoder-side stub (ec_encode_bin) and a helper
