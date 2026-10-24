@@ -1,10 +1,5 @@
 name: Build iOS .ipa (armv7, iOS 9.3)
 
-# Cross-compiles Zelda3ARMv7 (zelda3 decompilation, ported off SDL/OpenGL onto
-# UIKit/CoreAnimation/AudioQueue) for 32-bit iOSvasya daun 9.3 with Theos + clang on
-# ubuntu-latest. No Xcode / no Mac runner required. Pipeline structure copied
-# from the ShevaPDS1 (Imlac PDS-1 emulator) project's working armv7 CI.
-
 on:
   push:
     branches: [32bit-ios]
@@ -88,8 +83,11 @@ jobs:
           echo "remaining module.map files:"
           find "$SDK" -name module.map | wc -l
 
-      - name: Patch Z3View.m (stripe fix + ARC dealloc fix)
+      - name: Patch sources (ppu.h layout fix, Z3View stripe fix)
         run: |
+          # Stale root copy shadows Engine's header via -I. and gives a different
+          # Ppu layout (vram off by 4 bytes) plus missing ppu_getVram decls.
+          cp -f Zelda3/Engine/snes/ppu.h snes/ppu.h
           python3 - <<'PYEOF'
           import sys
           p = 'Zelda3/Platform/Z3View.m'
