@@ -136,7 +136,6 @@ jobs:
               '  GLfloat scy = (GLfloat)_fbHeight * sy / (GLfloat)_gameH;\n'
               '  glUniform2f(_uScale, scx < 1.0f ? 1.0f : scx, scy < 1.0f ? 1.0f : scy);',
               'uniform set')
-          rep('  [self teardownGL];\n  [super dealloc];', '  [self teardownGL];', 'super dealloc')
 
           if crlf:
               s = s.replace('\n', '\r\n')
