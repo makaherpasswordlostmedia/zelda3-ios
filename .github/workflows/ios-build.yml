@@ -1,4 +1,4 @@
-name: Build iOS .ipa (armv7, iOS 9.3)
+name: Build iOS .ipa (armv7, iOS 7+)
 
 on:
   push:
@@ -23,7 +23,7 @@ on:
 
 jobs:
   build-ios-armv7:
-    name: Build (Theos / iOS 9.3 / armv7)
+    name: Build (Theos / iOS 7+ / armv7)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -85,8 +85,6 @@ jobs:
 
       - name: Patch sources (ppu.h layout fix, Z3View stripe fix)
         run: |
-          # Stale root copy shadows Engine's header via -I. and gives a different
-          # Ppu layout (vram off by 4 bytes) plus missing ppu_getVram decls.
           cp -f Zelda3/Engine/snes/ppu.h snes/ppu.h
           python3 - <<'PYEOF'
           import sys
@@ -104,18 +102,18 @@ jobs:
           a = s.index('  static const char *kFragmentSrc =')
           b = s.index('  GLuint vs = CompileShader')
           s = s[:a] + r'''  static const char *kFragmentSrc =
-              "precision highp float;\n"
-              "varying vec2 vTexCoord;\n"
-              "uniform sampler2D uTexture;\n"
-              "uniform vec2 uTexSize;\n"
-              "uniform vec2 uScale;\n"
-              "void main() {\n"
-              "  vec2 px = vTexCoord * uTexSize;\n"
-              "  vec2 base = floor(px);\n"
-              "  vec2 f = clamp((px - base - 0.5) * uScale + 0.5, 0.0, 1.0);\n"
-              "  vec2 uv = (base + f) / uTexSize;\n"
-              "  gl_FragColor = vec4(texture2D(uTexture, uv).bgr, 1.0);\n"
-              "}\n";
+                "precision highp float;\n"
+                "varying vec2 vTexCoord;\n"
+                "uniform sampler2D uTexture;\n"
+                "uniform vec2 uTexSize;\n"
+                "uniform vec2 uScale;\n"
+                "void main() {\n"
+                "  vec2 px = vTexCoord * uTexSize;\n"
+                "  vec2 base = floor(px);\n"
+                "  vec2 f = clamp((px - base - 0.5) * uScale + 0.5, 0.0, 1.0);\n"
+                "  vec2 uv = (base + f) / uTexSize;\n"
+                "  gl_FragColor = vec4(texture2D(uTexture, uv).bgr, 1.0);\n"
+                "}\n";
 
           ''' + s[b:]
 
@@ -126,9 +124,9 @@ jobs:
               '  _uTexSize = glGetUniformLocation(_program, "uTexSize");\n'
               '  _uScale = glGetUniformLocation(_program, "uScale");', 'uniform locs')
           rep('glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);',
-              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);', 'min')
+              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);', 'min filter')
           rep('glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);',
-              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);', 'mag')
+              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);', 'mag filter')
           rep('  glUniform1i(_uTexture, 0);',
               '  glUniform1i(_uTexture, 0);\n'
               '  glUniform2f(_uTexSize, (GLfloat)_texW, (GLfloat)_texH);\n'
@@ -143,6 +141,58 @@ jobs:
           print('Z3View.m patched OK')
           PYEOF
           grep -c 'uScale' Zelda3/Platform/Z3View.m
+
+      - name: Patch for iOS 7 (deployment target, alert fallback)
+        run: |
+          sed -i 's/^TARGET := iphone:clang:9.3:9.3/TARGET := iphone:clang:9.3:7.0/' Makefile
+          sed -i 's/firmware (>= 9.3)/firmware (>= 7.0)/' control
+          python3 - <<'PYEOF'
+          import re, sys
+
+          def load(p):
+              raw = open(p, newline='').read()
+              return ('\r\n' in raw), raw.replace('\r\n', '\n')
+
+          def save(p, s, crlf):
+              open(p, 'w', newline='').write(s.replace('\n', '\r\n') if crlf else s)
+
+          p = 'Resources/Info.plist'
+          crlf, s = load(p)
+          s, n = re.subn(r'(<key>MinimumOSVersion</key>\s*<string>)9\.3(</string>)',
+                         r'\g<1>7.0\g<2>', s)
+          if n != 1:
+              sys.exit('PATCH FAILED (MinimumOSVersion)')
+          save(p, s, crlf)
+
+          p = 'Zelda3/App/GameViewController.m'
+          crlf, s = load(p)
+          a = s.index('- (void)showFatalAlert:(NSString *)message {')
+          b = s.index('- (void)buildTouchOverlay')
+          new_fn = '\n'.join([
+              '- (void)showFatalAlert:(NSString *)message {',
+              '#pragma clang diagnostic push',
+              '#pragma clang diagnostic ignored "-Wunguarded-availability"',
+              '#pragma clang diagnostic ignored "-Wunguarded-availability-new"',
+              '#pragma clang diagnostic ignored "-Wdeprecated-declarations"',
+              '  if (NSClassFromString(@"UIAlertController")) {',
+              '    UIAlertController *ac = [UIAlertController alertControllerWithTitle:@"Zelda3 crashed"',
+              '        message:message preferredStyle:UIAlertControllerStyleAlert];',
+              '    [ac addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];',
+              '    [self presentViewController:ac animated:YES completion:nil];',
+              '  } else {',
+              '    // iOS 7: no UIAlertController.',
+              '    UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"Zelda3 crashed" message:message',
+              '        delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];',
+              '    [av show];',
+              '  }',
+              '#pragma clang diagnostic pop',
+              '}',
+              '', ''])
+          s = s[:a] + new_fn + s[b:]
+          save(p, s, crlf)
+          print('iOS 7 patch OK')
+          PYEOF
+          grep -n '^TARGET' Makefile
 
       - name: Build .deb + .app via Theos
         env:
@@ -166,13 +216,13 @@ jobs:
           fi
           echo "Using APP_DIR=$APP_DIR"
           cp -a "$APP_DIR" ipa_build/Payload/
-          (cd ipa_build && zip -rq ../packages/Zelda3-${{ steps.commit-info.outputs.hash }}-armv7-iOS9.3.ipa Payload)
+          (cd ipa_build && zip -rq ../packages/Zelda3-${{ steps.commit-info.outputs.hash }}-armv7-iOS7.ipa Payload)
           ls -la packages
 
       - name: Upload .ipa + .deb artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Zelda3-armv7-iOS9.3-${{ steps.commit-info.outputs.hash }}
+          name: Zelda3-armv7-iOS7-${{ steps.commit-info.outputs.hash }}
           path: |
             packages/*.ipa
             packages/*.deb
