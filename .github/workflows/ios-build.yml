@@ -2,23 +2,7 @@ name: Build iOS .ipa (armv7, iOS 5+)
 
 on:
   push:
-    branches: [32bit-ios]
-    paths:
-      - "Zelda3/**"
-      - "Resources/**"
-      - "Makefile"
-      - "control"
-      - "entitlements.plist"
-      - ".github/workflows/ios5-build.yml"
   pull_request:
-    branches: [main]
-    paths:
-      - "Zelda3/**"
-      - "Resources/**"
-      - "Makefile"
-      - "control"
-      - "entitlements.plist"
-      - ".github/workflows/ios5-build.yml"
   workflow_dispatch: {}
 
 jobs:
