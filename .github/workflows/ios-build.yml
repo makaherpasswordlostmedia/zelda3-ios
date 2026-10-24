@@ -53,10 +53,6 @@ jobs:
           THEOS: ${{ github.workspace }}/theos
         run: |
           git clone --recursive https://github.com/theos/theos.git "$THEOS"
-          # Theos expects the iOS cross compiler at
-          # $THEOS/toolchain/linux/iphone/bin/clang. Grab the Linux->iOS
-          # toolchain release (bundles clang, ld64, cctools, libtapi, ldid etc.
-          # and supports the legacy 32-bit ARM ABI) -- same release ShevaPDS1 uses.
           mkdir -p "$THEOS/toolchain/linux/iphone"
           curl -fsSL \
             "https://github.com/L1ghtmann/llvm-project/releases/download/main-update_3-eabca92/iOSToolchain-x86_64.tar.xz" \
@@ -70,8 +66,6 @@ jobs:
           THEOS: ${{ github.workspace }}/theos
         run: |
           mkdir -p "$THEOS/sdks"
-          # Sn0wCooder/theos-sdks is a community mirror that keeps the
-          # legacy SDKs with armv7 slices alive.
           curl -fsSL -o /tmp/iphoneos9.3.sdk.tbz2 \
             "https://raw.githubusercontent.com/Sn0wCooder/theos-sdks/master/iPhoneOS9.3.sdk.tbz2"
           tar -xjf /tmp/iphoneos9.3.sdk.tbz2 -C "$THEOS/sdks"
@@ -81,9 +75,6 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
-          # clang 19 rejects the old 'module.map' name (-Wdeprecated-module-dot-map)
-          # and refuses to build the Foundation/UIKit modules. Rename to the
-          # modern name, as the compiler itself suggests.
           SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
           for fw in "$SDK"/System/Library/Frameworks/*.framework; do
             if [ -f "$fw/module.map" ]; then
@@ -96,6 +87,65 @@ jobs:
           done
           echo "remaining module.map files:"
           find "$SDK" -name module.map | wc -l
+
+      - name: Patch Z3View.m (stripe fix + ARC dealloc fix)
+        run: |
+          python3 - <<'PYEOF'
+          import sys
+          p = 'Zelda3/Platform/Z3View.m'
+          s = open(p, newline='').read()
+          crlf = '\r\n' in s
+          s = s.replace('\r\n', '\n')
+
+          def rep(old, new, what):
+              global s
+              if s.count(old) != 1:
+                  sys.exit('PATCH FAILED (%s): found %d matches' % (what, s.count(old)))
+              s = s.replace(old, new)
+
+          a = s.index('  static const char *kFragmentSrc =')
+          b = s.index('  GLuint vs = CompileShader')
+          s = s[:a] + r'''  static const char *kFragmentSrc =
+              "precision highp float;\n"
+              "varying vec2 vTexCoord;\n"
+              "uniform sampler2D uTexture;\n"
+              "uniform vec2 uTexSize;\n"
+              "uniform vec2 uScale;\n"
+              "void main() {\n"
+              "  vec2 px = vTexCoord * uTexSize;\n"
+              "  vec2 base = floor(px);\n"
+              "  vec2 f = clamp((px - base - 0.5) * uScale + 0.5, 0.0, 1.0);\n"
+              "  vec2 uv = (base + f) / uTexSize;\n"
+              "  gl_FragColor = vec4(texture2D(uTexture, uv).bgr, 1.0);\n"
+              "}\n";
+
+          ''' + s[b:]
+
+          rep('GLint _aPosition, _aTexCoord, _uTexture;',
+              'GLint _aPosition, _aTexCoord, _uTexture, _uTexSize, _uScale;', 'ivars')
+          rep('  _uTexture = glGetUniformLocation(_program, "uTexture");',
+              '  _uTexture = glGetUniformLocation(_program, "uTexture");\n'
+              '  _uTexSize = glGetUniformLocation(_program, "uTexSize");\n'
+              '  _uScale = glGetUniformLocation(_program, "uScale");', 'uniform locs')
+          rep('glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);',
+              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);', 'min')
+          rep('glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);',
+              'glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);', 'mag')
+          rep('  glUniform1i(_uTexture, 0);',
+              '  glUniform1i(_uTexture, 0);\n'
+              '  glUniform2f(_uTexSize, (GLfloat)_texW, (GLfloat)_texH);\n'
+              '  GLfloat scx = (GLfloat)_fbWidth * sx / (GLfloat)_gameW;\n'
+              '  GLfloat scy = (GLfloat)_fbHeight * sy / (GLfloat)_gameH;\n'
+              '  glUniform2f(_uScale, scx < 1.0f ? 1.0f : scx, scy < 1.0f ? 1.0f : scy);',
+              'uniform set')
+          rep('  [self teardownGL];\n  [super dealloc];', '  [self teardownGL];', 'super dealloc')
+
+          if crlf:
+              s = s.replace('\n', '\r\n')
+          open(p, 'w', newline='').write(s)
+          print('Z3View.m patched OK')
+          PYEOF
+          grep -c 'uScale' Zelda3/Platform/Z3View.m
 
       - name: Build .deb + .app via Theos
         env:
