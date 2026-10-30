@@ -1,0 +1,286 @@
+name: Zelda3 PSP Build
+
+# Self-contained: this single file patches the sources, adds the PSP platform
+# layer + OpenGL(PSPGL) renderer + Makefile, and builds EBOOT.PBP. Nothing else to copy.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build EBOOT.PBP
+    runs-on: ubuntu-latest
+    container:
+      image: pspdev/pspdev:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2 for PSP
+        run: |
+          psp-pacman -Sy --noconfirm sdl2 || psp-pacman -S --noconfirm sdl2
+
+      - name: Apply PSP port (patches + new files)
+        run: |
+          mkdir -p src/platform/psp
+          cat > /tmp/patch.py <<'PYEOF'
+          import re, glob, os
+          def rd(p): return open(p, newline='').read()
+          def wr(p, s): open(p, 'w', newline='').write(s)
+
+          # types.h: unaligned-safe types
+          s = rd('src/types.h')
+          if 'uint16_ua' not in s:
+              s = s.replace("typedef unsigned int uint;\r\n",
+                "typedef unsigned int uint;\r\n"
+                "typedef uint16_t uint16_ua __attribute__((aligned(1)));\r\n"
+                "typedef int16_t  int16_ua  __attribute__((aligned(1)));\r\n"
+                "typedef uint32_t uint32_ua __attribute__((aligned(1)));\r\n"
+                "typedef int32_t  int32_ua  __attribute__((aligned(1)));\r\n"
+                "typedef uint64_t uint64_ua __attribute__((aligned(1)));\r\n", 1)
+              s = s.replace("(*(uint32*)&(x))&0xffffff", "(*(uint32_ua*)&(x))&0xffffff")
+              s = s.replace("#define WORD(x) (*(uint16*)&(x))", "#define WORD(x) (*(uint16_ua*)&(x))")
+              s = s.replace("#define DWORD(x) (*(uint32*)&(x))", "#define DWORD(x) (*(uint32_ua*)&(x))")
+              wr('src/types.h', s)
+
+          pat = re.compile(r'\((u?int(?:16|32|64))\s*\*\)')
+          skip = ('types.h', 'ppu.c', 'main.c')
+          for f in glob.glob('src/*.c') + glob.glob('src/*.h') + glob.glob('snes/*.c') + glob.glob('snes/*.h'):
+              if os.path.basename(f) in skip: continue
+              s = rd(f)
+              t = pat.sub(lambda m: '(%s_ua*)' % m.group(1), s)
+              t = re.sub(r'\b(const\s+)?(u?int(?:16|32|64))\s*\*\s*(\w+)\s*=\s*\((u?int(?:16|32|64)_ua)\*\)',
+                         lambda m: '%s%s_ua *%s = (%s*)' % (m.group(1) or '', m.group(2), m.group(3), m.group(4)), t)
+              if t != s: wr(f, t)
+
+          # main.c: asset header reads + PSP input hook
+          s = rd('src/main.c')
+          s = re.sub(r'\*\(uint32\s*\*\)\(data', '*(uint32_ua*)(data', s)
+          if 'PspReadInput' not in s:
+              s = s.replace("    inputs |= g_gamepad_buttons;\r\n", "    inputs |= g_gamepad_buttons;\r\n#ifdef __PSP__\r\n    inputs |= PspReadInput();\r\n#endif\r\n", 1)
+              s = s.replace("static bool g_run_without_emu = 0;\r\n", "static bool g_run_without_emu = 0;\r\n#ifdef __PSP__\r\nint PspReadInput(void);\r\n#endif\r\n", 1)
+          wr('src/main.c', s)
+
+          # PSP ini derived from zelda3.ini
+          s = rd('zelda3.ini')
+          for a, b in [("Fullscreen = 0\r\n", "Fullscreen = 2\r\n"), ("WindowSize = Auto", "WindowSize = 480x272"),
+                       ("EnhancedMode7 = 1", "EnhancedMode7 = 0"), ("NoSpriteLimits = 1", "NoSpriteLimits = 0"),
+                       ("AudioFreq = 44100", "AudioFreq = 32000"), ("AudioSamples = 512", "AudioSamples = 1024"),
+                       ("OutputMethod = SDL\r\n", "OutputMethod = OpenGL\r\n")]:
+              s = s.replace(a, b, 1)
+
+          os.makedirs('src/platform/psp', exist_ok=True)
+          wr('src/platform/psp/zelda3.ini', s)
+          PYEOF
+          cat > src/platform/psp/psp_platform.c <<'CEOF'
+          // PSP platform glue for zelda3: module info, HOME-button exit, native input,
+          // and stubs for features the PSP build does not carry (OpenGL, Opus/MSU).
+          #ifdef __PSP__
+          #include <pspkernel.h>
+          #include <pspctrl.h>
+          #include <pspdebug.h>
+          #include <SDL.h>
+          #include <stdio.h>
+          #include "types.h"
+          #include "config.h"
+
+          PSP_MODULE_INFO("zelda3", PSP_MODULE_USER, 1, 0);
+          PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU);
+          PSP_MAIN_THREAD_STACK_SIZE_KB(512);
+          PSP_HEAP_SIZE_MAX();
+
+          // ---- HOME button: ask the main loop to quit cleanly (SDL_QUIT is thread-safe to push)
+          static int ExitCallback(int arg1, int arg2, void *common) {
+            SDL_Event e = { 0 };
+            e.type = SDL_QUIT;
+            if (SDL_PushEvent(&e) <= 0)
+              sceKernelExitGame();
+            return 0;
+          }
+          static int CallbackThread(SceSize args, void *argp) {
+            int cb = sceKernelCreateCallback("exit_cb", ExitCallback, NULL);
+            sceKernelRegisterExitCallback(cb);
+            sceKernelSleepThreadCB();
+            return 0;
+          }
+          __attribute__((constructor)) static void SetupCallbacks(void) {
+            int thid = sceKernelCreateThread("cb_thread", CallbackThread, 0x11, 0xFA0, PSP_THREAD_ATTR_USER, NULL);
+            if (thid >= 0) sceKernelStartThread(thid, 0, NULL);
+            sceCtrlSetSamplingCycle(0);
+            sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
+          }
+
+          // ---- Native input -> SNES joypad bits (same layout as g_input1_state in main.c)
+          // bit0=B 1=Y 2=Select 3=Start 4=Up 5=Down 6=Left 7=Right 8=A 9=X 10=L 11=R
+          int PspReadInput(void) {
+            SceCtrlData pad;
+            sceCtrlPeekBufferPositive(&pad, 1);
+            unsigned b = pad.Buttons;
+            int r = 0;
+            if (b & PSP_CTRL_CROSS)    r |= 1 << 0;   // B
+            if (b & PSP_CTRL_SQUARE)   r |= 1 << 1;   // Y
+            if (b & PSP_CTRL_SELECT)   r |= 1 << 2;
+            if (b & PSP_CTRL_START)    r |= 1 << 3;
+            if (b & PSP_CTRL_UP)       r |= 1 << 4;
+            if (b & PSP_CTRL_DOWN)     r |= 1 << 5;
+            if (b & PSP_CTRL_LEFT)     r |= 1 << 6;
+            if (b & PSP_CTRL_RIGHT)    r |= 1 << 7;
+            if (b & PSP_CTRL_CIRCLE)   r |= 1 << 8;   // A
+            if (b & PSP_CTRL_TRIANGLE) r |= 1 << 9;   // X
+            if (b & PSP_CTRL_LTRIGGER) r |= 1 << 10;
+            if (b & PSP_CTRL_RTRIGGER) r |= 1 << 11;
+            int ax = (int)pad.Lx - 128, ay = (int)pad.Ly - 128;
+            if (ax < -64) r |= 1 << 6; else if (ax > 64) r |= 1 << 7;
+            if (ay < -64) r |= 1 << 4; else if (ay > 64) r |= 1 << 5;
+            return r;
+          }
+
+          #endif
+          CEOF
+          cat > src/platform/psp/psp_gl.c <<'CEOF'
+          // OpenGL 1.x fixed-function renderer for PSP (PSPGL). Replaces the GL3.1/GLSL
+          // backend in opengl.c, which cannot run on the PSP (no shaders).
+          #ifdef __PSP__
+          #include <GL/gl.h>
+          #include <SDL.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include "types.h"
+          #include "util.h"
+          #include "config.h"
+
+          enum { kTexW = 512, kTexH = 256 };  // PSP textures must be power-of-two, max 512
+
+          static SDL_Window *g_window;
+          static GLuint g_tex;
+          static uint8 *g_screen_buffer;   // PPU output (ARGB8888 as bytes B,G,R,A)
+          static uint32 *g_staging;        // kTexW*kTexH RGBA bytes
+          static int g_draw_width, g_draw_height;
+
+          static bool PspGl_Init(SDL_Window *window) {
+            g_window = window;
+            SDL_GLContext ctx = SDL_GL_CreateContext(window);
+            if (!ctx) { printf("GL context failed: %s\n", SDL_GetError()); return false; }
+            SDL_GL_SetSwapInterval(1);
+            g_staging = calloc(kTexW * kTexH, 4);
+            g_screen_buffer = malloc(448 * 240 * 4);
+            if (!g_staging || !g_screen_buffer) return false;
+            glGenTextures(1, &g_tex);
+            glBindTexture(GL_TEXTURE_2D, g_tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kTexW, kTexH, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_staging);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_TEXTURE_2D);
+            return true;
+          }
+
+          static void PspGl_Destroy() {
+            free(g_staging); free(g_screen_buffer);
+          }
+
+          static void PspGl_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
+            if (width > 448) width = 448;
+            if (height > 240) height = 240;
+            g_draw_width = width;
+            g_draw_height = height;
+            *pixels = g_screen_buffer;
+            *pitch = width * 4;
+          }
+
+          static void PspGl_EndDraw() {
+            int w = g_draw_width, h = g_draw_height;
+            // swap B<->R (PPU writes 0xAARRGGBB, GL1 wants bytes R,G,B,A) and force opaque
+            for (int y = 0; y < h; y++) {
+              const uint32 *s = (const uint32 *)(g_screen_buffer + y * w * 4);
+              uint32 *d = g_staging + y * kTexW;
+              for (int x = 0; x < w; x++) {
+                uint32 p = s[x];
+                d[x] = 0xff000000u | ((p & 0xff) << 16) | (p & 0xff00) | ((p >> 16) & 0xff);
+              }
+            }
+            glBindTexture(GL_TEXTURE_2D, g_tex);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kTexW, h, GL_RGBA, GL_UNSIGNED_BYTE, g_staging);
+            int filter = g_config.linear_filtering ? GL_LINEAR : GL_NEAREST;
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+
+            int dw = 480, dh = 272;
+            SDL_GetWindowSize(g_window, &dw, &dh);
+            int vw = dw, vh = dh;
+            if (!g_config.ignore_aspect_ratio) {
+              if (vw * h < vh * w) vh = vw * h / w; else vw = vh * w / h;
+            }
+            int vx = (dw - vw) >> 1, vy = (dh - vh) >> 1;
+
+            glViewport(0, 0, dw, dh);
+            glClearColor(0, 0, 0, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glMatrixMode(GL_PROJECTION); glLoadIdentity();
+            glOrtho(0, dw, dh, 0, -1, 1);
+            glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+
+            float u = (float)w / kTexW, v = (float)h / kTexH;
+            glColor4f(1, 1, 1, 1);
+            glBegin(GL_TRIANGLE_STRIP);
+            glTexCoord2f(0, 0); glVertex2f(vx, vy);
+            glTexCoord2f(u, 0); glVertex2f(vx + vw, vy);
+            glTexCoord2f(0, v); glVertex2f(vx, vy + vh);
+            glTexCoord2f(u, v); glVertex2f(vx + vw, vy + vh);
+            glEnd();
+            SDL_GL_SwapWindow(g_window);
+          }
+
+          static const struct RendererFuncs kPspGlFuncs = {
+            &PspGl_Init, &PspGl_Destroy, &PspGl_BeginDraw, &PspGl_EndDraw,
+          };
+
+          void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es) {
+            *funcs = kPspGlFuncs;
+          }
+          #endif
+          CEOF
+          cat > Makefile.psp <<'MEOF'
+          # PSP build (pspdev toolchain + SDL2).   make -f Makefile.psp
+          TARGET = zelda3
+          OBJS  := $(patsubst %.c,%.o,$(filter-out src/opengl.c src/glsl_shader.c,$(wildcard src/*.c)) $(wildcard snes/*.c)) src/platform/psp/psp_platform.o src/platform/psp/psp_gl.o third_party/opus-1.3.1-stripped/opus_decoder_amalgam.o
+
+          INCDIR   = . src
+          CFLAGS   = -O2 -G0 -Wall -Wno-parentheses -Wno-unused -Wno-misleading-indentation \
+                     -fno-strict-aliasing -fwrapv -std=gnu11 -D__PSP__ -DSYSTEM_VOLUME_MIXER_AVAILABLE=0 \
+                     $(shell psp-pkg-config --cflags sdl2 2>/dev/null)
+          CXXFLAGS = $(CFLAGS)
+          ASFLAGS  = $(CFLAGS)
+
+          SDL_LIBS = $(filter-out -lSDL2main,$(shell psp-pkg-config --libs --static sdl2 2>/dev/null))
+          LIBS     = $(SDL_LIBS) -lm
+          ifeq ($(strip $(SDL_LIBS)),)
+          LIBS = -lSDL2 -lGL -lGLU -lglut -lpspvram -lpspaudio -lpspgu -lpspge -lpspdisplay -lpspctrl -lpsppower -lpsprtc -lm
+          endif
+
+          EXTRA_TARGETS   = EBOOT.PBP
+          PSP_EBOOT_TITLE = Zelda3 PSP
+
+          PSPSDK = $(shell psp-config --pspsdk-path)
+          include $(PSPSDK)/lib/build.mak
+
+          dist: EBOOT.PBP
+          	rm -rf dist/zelda3 && mkdir -p dist/zelda3/saves
+          	cp EBOOT.PBP dist/zelda3/
+          	cp src/platform/psp/zelda3.ini dist/zelda3/
+          	cp README_PSP.md dist/
+          MEOF
+          python3 /tmp/patch.py
+
+      - name: Build
+        run: |
+          export PATH=$PATH:/usr/local/pspdev/bin
+          make -f Makefile.psp -j$(nproc) EBOOT.PBP
+          mkdir -p dist/zelda3/saves
+          cp EBOOT.PBP src/platform/psp/zelda3.ini dist/zelda3/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zelda3-psp
+          path: dist/
