@@ -9,17 +9,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build EBOOT.PBP
+  patch:
+    name: Apply PSP port
     runs-on: ubuntu-latest
-    container:
-      image: pspdev/pspdev:latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install SDL2 for PSP
-        run: |
-          psp-pacman -Sy --noconfirm sdl2 || psp-pacman -S --noconfirm sdl2
 
       - name: Apply PSP port (patches + new files)
         run: |
@@ -272,6 +266,32 @@ jobs:
           	cp README_PSP.md dist/
           MEOF
           python3 /tmp/patch.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patched-src
+          path: |
+            src
+            snes
+            third_party
+            Makefile.psp
+          include-hidden-files: true
+
+  build:
+    name: Build EBOOT.PBP
+    needs: patch
+    runs-on: ubuntu-latest
+    container:
+      image: pspdev/pspdev:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-src
+          path: .
+
+      - name: Install SDL2 for PSP
+        run: |
+          psp-pacman -Sy --noconfirm sdl2 || psp-pacman -S --noconfirm sdl2
 
       - name: Build
         run: |
