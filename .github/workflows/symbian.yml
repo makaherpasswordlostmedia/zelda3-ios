@@ -716,7 +716,7 @@ jobs:
                       {
                       continue;
                       }
-                  TChar letter(A + d);
+                  TChar letter('A' + d);
                   TFileName bps;
                   bps.Append(letter);
                   bps.Append(_L(":\\zelda3\\zelda3_assets.bps"));
@@ -1287,12 +1287,12 @@ jobs:
                       case EStdKeyDownArrow:  bit = Z3_PAD_DOWN; break;
                       case EStdKeyLeftArrow:  bit = Z3_PAD_LEFT; break;
                       case EStdKeyRightArrow: bit = Z3_PAD_RIGHT; break;
-                      case X:               bit = Z3_PAD_A; break;
-                      case Z:               bit = Z3_PAD_B; break;
-                      case S:               bit = Z3_PAD_X; break;
-                      case A:               bit = Z3_PAD_Y; break;
-                      case C:               bit = Z3_PAD_L; break;
-                      case V:               bit = Z3_PAD_R; break;
+                      case 'X':               bit = Z3_PAD_A; break;
+                      case 'Z':               bit = Z3_PAD_B; break;
+                      case 'S':               bit = Z3_PAD_X; break;
+                      case 'A':               bit = Z3_PAD_Y; break;
+                      case 'C':               bit = Z3_PAD_L; break;
+                      case 'V':               bit = Z3_PAD_R; break;
                       case EStdKeyEnter: case EStdKeyDevice3: bit = Z3_PAD_START; break;
                       case EStdKeySpace: case EStdKeyBackspace: bit = Z3_PAD_SELECT; break;
                       default: break;
