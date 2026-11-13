@@ -1,0 +1,1891 @@
+name: Build Symbian^3 SIS (Zelda3)
+
+# SELF-CONTAINED: this single file carries the whole Symbian port (symbian/ tree) and patches the
+# zelda3 sources at build time. Toolchain: https://github.com/fieldops-dev/symbian3-toolchain
+# (Apple Silicon runner; first run builds GCC ~2h and caches it).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  TOOLCHAIN_REPO: fieldops-dev/symbian3-toolchain
+  TOOLCHAIN_REF: a96f917e6c8f02fe4f7c2186f8df760d3d9d832a
+  SYMBIAN_VOL: /Volumes/Symbian
+  GNUPOC_COMMIT: d3ddaf58c734ad3ab34dc60a012f9d4768a9ed3e
+  GCC4SYMBIAN_COMMIT: fe1b15a1c25716d5c515f12593080d58f14d4c3f
+
+jobs:
+  sources:
+    name: Write port sources and patch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate symbian/ tree and patch sources
+        run: |
+          set -e
+          mkdir -p symbian
+          true
+          cat > symbian/README.md <<'Z3_EOF'
+          # Zelda3 for Symbian^3
+
+          Native Symbian^3 (Nokia N8, C7, E7, ...) port of the zelda3 C reimplementation. Built entirely by
+          `.github/workflows/symbian.yml` (it carries the whole port and patches the sources at build time).
+
+          * `core/z3_platform.c` replaces `src/main.c` (no SDL): config, asset loading, frame/draw/audio entry points.
+          * `app/` Avkon front end: multi-touch pad, overlay menu, MMF audio (32 kHz stereo), `bld.inf`/`.mmp`/`.pkg`.
+          * `compat/` tiny SDL key shim for `config.c`; `core/opus_stub.c` (MSU not supported).
+          * `tools/patch_symbian.py` makes the sources ARM-alignment-safe, writes the `.ini` and the `.mmp`.
+
+          ## Install
+          Install `zelda3.sisx`, then copy your US ROM as `zelda3.sfc` into the `zelda3` folder created on the drive
+          you installed to (e.g. `E:\zelda3\`). On first start the bundled `zelda3_assets.bps` is applied to the ROM.
+          Saves go to `zelda3\saves\`. Edit `zelda3\zelda3.ini` for options (`ExtendedAspectRatio = 16:9` etc).
+
+          Controls: touch pad (multi-touch), or keys: arrows, X=A, Z=B, S=X, A=Y, C=L, V=R, Enter=Start, Space=Select,
+          left soft key = menu.
+
+          ## Status
+          Core links and the error paths were tested on a desktop. The Symbian layer has not been compiled against the
+          real SDK or run on a device: expect small fixes on the first CI run.
+          Z3_EOF
+          mkdir -p symbian/app/data
+          cat > symbian/app/data/zelda3.rss <<'Z3_EOF'
+          NAME ZEL3
+
+          #include <eikon.rh>
+          #include <avkon.rh>
+          #include <avkon.rsg>
+          #include <appinfo.rh>
+
+          RESOURCE RSS_SIGNATURE { }
+
+          RESOURCE TBUF r_default_document_name { buf = ""; }
+
+          RESOURCE EIK_APP_INFO
+              {
+              }
+
+          RESOURCE LOCALISABLE_APP_INFO r_localisable_app_info
+              {
+              short_caption = "Zelda3";
+              caption_and_icon = CAPTION_AND_ICON_INFO
+                  {
+                  caption = "Zelda3";
+                  number_of_icons = 0;
+                  };
+              }
+          Z3_EOF
+          mkdir -p symbian/app/data
+          cat > symbian/app/data/zelda3_reg.rss <<'Z3_EOF'
+          #include <appinfo.rh>
+          #include <zelda3.rsg>
+
+          UID2 KUidAppRegistrationResourceFile
+          UID3 0xE1A5B3DA
+
+          RESOURCE APP_REGISTRATION_INFO
+              {
+              app_file = "zelda3";
+              localisable_resource_file = "\\resource\\apps\\zelda3";
+              localisable_resource_id = R_LOCALISABLE_APP_INFO;
+              embeddability = KAppNotEmbeddable;
+              newfile = KAppDoesNotSupportNewFile;
+              }
+          Z3_EOF
+          mkdir -p symbian/app/group
+          cat > symbian/app/group/bld.inf <<'Z3_EOF'
+          PRJ_PLATFORMS
+          DEFAULT
+
+          PRJ_MMPFILES
+          zelda3.mmp
+          Z3_EOF
+          mkdir -p symbian/app/group
+          cat > symbian/app/group/zelda3.mmp.in <<'Z3_EOF'
+          // Zelda3 (A Link to the Past C port) for Symbian^3.
+          // zelda3.mmp is generated from this file by symbian/tools/patch_symbian.py.
+          #include <platform_paths.hrh>
+
+          TARGET          zelda3.exe
+          TARGETTYPE      exe
+          UID             0x100039CE 0xE1A5B3DA
+          SECUREID        0xE1A5B3DA
+          VENDORID        0
+          CAPABILITY      NONE
+
+          EPOCSTACKSIZE   0x80000
+          EPOCHEAPSIZE    0x400000 0x4000000
+
+          MACRO           NDEBUG
+          MACRO           Z3_SYMBIAN
+          MACRO           Z3_MULTITOUCH
+          MACRO           SYSTEM_VOLUME_MIXER_AVAILABLE=0
+
+          SOURCEPATH      ../src
+          SOURCE          zelda3_app.cpp
+          SOURCE          zelda3_appui.cpp
+          SOURCE          zelda3_container.cpp
+          SOURCE          zelda3_audio.cpp
+
+          SOURCEPATH      ../../core
+          SOURCE          z3_platform.c
+          SOURCE          opus_stub.c
+
+          @CORE_SOURCES@
+          USERINCLUDE     ../inc
+          USERINCLUDE     ../../core
+          USERINCLUDE     ../../compat
+          USERINCLUDE     ../../..
+          SYSTEMINCLUDE   /epoc32/include/stdapis
+          APP_LAYER_SYSTEMINCLUDE
+
+          SOURCEPATH      ../data
+          START RESOURCE  zelda3.rss
+          HEADER
+          TARGETPATH      /resource/apps
+          END
+
+          START RESOURCE  zelda3_reg.rss
+          TARGETPATH      /private/10003a3f/import/apps
+          END
+
+          LIBRARY         euser.lib apparc.lib cone.lib eikcore.lib avkon.lib eikcoctl.lib
+          LIBRARY         fbscli.lib bitgdi.lib gdi.lib ws32.lib efsrv.lib
+          LIBRARY         mediaclientaudiostream.lib bafl.lib
+          LIBRARY         libc.lib libm.lib
+
+          // The game core type-puns heavily and wraps on signed overflow; ARM must not do unaligned accesses.
+          OPTION          GCCE -O2 -fno-strict-aliasing -fwrapv -mno-unaligned-access
+          OPTION          GCCE -Wno-error=implicit-function-declaration -Wno-error=int-conversion
+          OPTION          GCCE -Wno-error=incompatible-pointer-types -Wno-error=implicit-int
+          OPTION          GCCE -idirafter @GCCINC@
+          Z3_EOF
+          mkdir -p symbian/app/inc
+          cat > symbian/app/inc/zelda3.h <<'Z3_EOF'
+          // zelda3.h - Symbian^3 front end for the zelda3 C port.
+          #ifndef ZELDA3_SYMBIAN_H
+          #define ZELDA3_SYMBIAN_H
+
+          #include <aknapp.h>
+          #include <akndoc.h>
+          #include <aknappui.h>
+          #include <coecntrl.h>
+          #include <e32base.h>
+          #include <f32file.h>
+          #include <fbs.h>
+          #include <mdaaudiosampleplayer.h>
+          #include <mdaaudiooutputstream.h>
+
+          #include "z3_platform.h"
+
+          const TUid KUidZelda3 = { (TInt32)0xE1A5B3DA };
+
+          // ---------------------------------------------------------------------------
+          // Audio: pushes the PCM16 blocks rendered by the core to a CMdaAudioOutputStream.
+          // ---------------------------------------------------------------------------
+          class CZelda3Audio : public CBase, public MMdaAudioOutputStreamCallback
+              {
+          public:
+              static CZelda3Audio* NewL(TInt aRate, TInt aChannels);
+              ~CZelda3Audio();
+              void Write(const TInt16* aSamples, TInt aBytes);   // drops data when the queue is full
+              void Suspend();
+              void Resume();
+
+              // MMdaAudioOutputStreamCallback
+              void MaoscOpenComplete(TInt aError);
+              void MaoscBufferCopied(TInt aError, const TDesC8& aBuffer);
+              void MaoscPlayComplete(TInt aError);
+
+          private:
+              CZelda3Audio(TInt aRate, TInt aChannels);
+              void OpenStream();
+
+              enum { KSlots = 5, KSlotBytes = 8192, KChunkFrames = 2 };
+              CMdaAudioOutputStream* iStream;
+              TInt iRate;
+              TInt iChannels;
+              TBool iReady;
+              TBool iSuspended;
+              TBuf8<KSlotBytes> iAcc;
+              TBuf8<KSlotBytes> iSlot[KSlots];
+              TBool iBusy[KSlots];
+              };
+
+          // ---------------------------------------------------------------------------
+          // Main control: loading screen, game view, touch pad and overlay menu.
+          // ---------------------------------------------------------------------------
+          class CZelda3Container : public CCoeControl
+              {
+          public:
+              static CZelda3Container* NewL(const TRect& aRect);
+              ~CZelda3Container();
+              void SetForeground(TBool aForeground);
+
+              // CCoeControl
+              void Draw(const TRect& aRect) const;
+              void SizeChanged();
+              void HandlePointerEventL(const TPointerEvent& aEvent);
+              TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+
+          private:
+              enum TMode { ELoading, EPlay, EMenu, EError };
+              enum { KMenuItems = 7, KMaxPtrs = 5 };
+
+              CZelda3Container();
+              void ConstructL(const TRect& aRect);
+
+              static TInt TickCb(TAny* aPtr);
+              static TInt InitCb(TAny* aPtr);
+              void Tick();
+              void DoInit();
+              void StartTimer();
+              void StopTimer();
+              TBool FindDataDir(TDes8& aPath);
+              void SetError(const TDesC8& aText);
+              void OpenMenu();
+              void MenuActionL(TInt aIndex);
+              void ComputeLayout();
+              void UpdateTouchPad();
+              TInt PadFromPoint(const TPoint& aPt) const;
+              TRect GameRect() const;
+              void DrawButton(CWindowGc& aGc, const TRect& aRect, const TDesC& aLabel, TBool aDown) const;
+              void DrawPad(CWindowGc& aGc) const;
+              void DrawMenu(CWindowGc& aGc) const;
+              void DrawCentred(CWindowGc& aGc, const TDesC& aText, TInt aY) const;
+
+              CFbsBitmap* iBitmap;
+              CPeriodic* iTimer;
+              CIdle* iIdle;
+              CZelda3Audio* iAudio;
+              RFs iFs;
+
+              TMode iMode;
+              TBool iForeground;
+              TBool iSound;
+              TInt iScale;              // 0 fit, 1 native, 2 stretch
+              TUint iLastTick;
+              TInt iAcc;
+              TInt iGameW, iGameH;
+              TInt iAudioBytes;
+
+              TBuf<160> iErrLine1;
+              TBuf<160> iErrLine2;
+
+              TInt iKeyPad;
+              TInt iTouchPad;
+              TBool iPtrDown[KMaxPtrs];
+              TPoint iPtrPos[KMaxPtrs];
+
+              // layout
+              TPoint iDpadCentre;
+              TInt iDpadR;
+              TRect iBtnA, iBtnB, iBtnX, iBtnY, iBtnL, iBtnR, iBtnSelect, iBtnStart, iBtnMenu;
+              TInt iMenuSel;
+              };
+
+          // ---------------------------------------------------------------------------
+          class CZelda3AppUi : public CAknAppUi
+              {
+          public:
+              void ConstructL();
+              ~CZelda3AppUi();
+              void HandleCommandL(TInt aCommand);
+              void HandleForegroundEventL(TBool aForeground);
+              void HandleResourceChangeL(TInt aType);
+          private:
+              CZelda3Container* iContainer;
+              };
+
+          class CZelda3Document : public CAknDocument
+              {
+          public:
+              CZelda3Document(CEikApplication& aApp) : CAknDocument(aApp) {}
+          private:
+              CEikAppUi* CreateAppUiL();
+              };
+
+          class CZelda3Application : public CAknApplication
+              {
+          private:
+              CApaDocument* CreateDocumentL();
+              TUid AppDllUid() const;
+              };
+
+          #endif
+          Z3_EOF
+          mkdir -p symbian/app/sis
+          cat > symbian/app/sis/zelda3.pkg <<'Z3_EOF'
+          ; Zelda3 for Symbian^3 - install package (paths are expanded by package-sis.sh)
+          &EN
+          #{"Zelda3"},(0xE1A5B3DA),1,0,0
+
+          %{"Zelda3 Symbian port"}
+          :"Symbian port"
+
+          ; Symbian^3 / S60 5th / S60 3rd platform IDs
+          [0x20022E6D], 0, 0, 0, {"S60ProductID"}
+          [0x1028315F], 0, 0, 0, {"S60ProductID"}
+          [0x102752AE], 0, 0, 0, {"S60ProductID"}
+          [0x102032BE], 0, 0, 0, {"S60ProductID"}
+          [0x101F7961], 0, 0, 0, {"S60ProductID"}
+
+          "$(epocroot)epoc32/release/$(platform)/$(target)/zelda3.exe"-"!:\sys\bin\zelda3.exe"
+          "$(epocroot)epoc32/data/z/resource/apps/zelda3.rsc"-"!:\resource\apps\zelda3.rsc"
+          "$(epocroot)epoc32/data/z/private/10003a3f/import/apps/zelda3_reg.rsc"-"!:\private\10003a3f\import\apps\zelda3_reg.rsc"
+          "zelda3_assets.bps"-"!:\zelda3\zelda3_assets.bps"
+          "zelda3.ini"-"!:\zelda3\zelda3.ini"
+          Z3_EOF
+          mkdir -p symbian/app/src
+          cat > symbian/app/src/zelda3_app.cpp <<'Z3_EOF'
+          // Application / document / entry point.
+          #include <eikstart.h>
+          #include "zelda3.h"
+
+          CApaDocument* CZelda3Application::CreateDocumentL()
+              {
+              return new (ELeave) CZelda3Document(*this);
+              }
+
+          TUid CZelda3Application::AppDllUid() const
+              {
+              return KUidZelda3;
+              }
+
+          CEikAppUi* CZelda3Document::CreateAppUiL()
+              {
+              return new (ELeave) CZelda3AppUi;
+              }
+
+          LOCAL_C CApaApplication* NewApplication()
+              {
+              return new CZelda3Application;
+              }
+
+          GLDEF_C TInt E32Main()
+              {
+              return EikStart::RunApplication(NewApplication);
+              }
+          Z3_EOF
+          mkdir -p symbian/app/src
+          cat > symbian/app/src/zelda3_appui.cpp <<'Z3_EOF'
+          // AppUi: owns the full-screen container.
+          #include <avkon.hrh>
+          #include <eikon.hrh>
+          #include <eikenv.h>
+          #include <eikspane.h>
+          #include <eikbtgpc.h>
+          #include "zelda3.h"
+
+          void CZelda3AppUi::ConstructL()
+              {
+              BaseConstructL(CAknAppUi::EAknEnableSkin);
+              SetOrientationL(CAknAppUiBase::EAppUiOrientationLandscape);
+
+              CEikStatusPane* sp = StatusPane();
+              if (sp)
+                  {
+                  sp->MakeVisible(EFalse);
+                  }
+              CEikButtonGroupContainer* cba = Cba();
+              if (cba)
+                  {
+                  cba->MakeVisible(EFalse);
+                  }
+
+              iContainer = CZelda3Container::NewL(ApplicationRect());
+              AddToStackL(iContainer);
+              }
+
+          CZelda3AppUi::~CZelda3AppUi()
+              {
+              if (iContainer)
+                  {
+                  RemoveFromStack(iContainer);
+                  delete iContainer;
+                  iContainer = NULL;
+                  }
+              }
+
+          void CZelda3AppUi::HandleCommandL(TInt aCommand)
+              {
+              switch (aCommand)
+                  {
+                  case EEikCmdExit:
+                  case EAknSoftkeyExit:
+                  case EAknCmdExit:
+                      Exit();
+                      break;
+                  default:
+                      break;
+                  }
+              }
+
+          void CZelda3AppUi::HandleForegroundEventL(TBool aForeground)
+              {
+              CAknAppUi::HandleForegroundEventL(aForeground);
+              if (iContainer)
+                  {
+                  iContainer->SetForeground(aForeground);
+                  }
+              }
+
+          void CZelda3AppUi::HandleResourceChangeL(TInt aType)
+              {
+              CAknAppUi::HandleResourceChangeL(aType);
+              if (iContainer && aType == KEikDynamicLayoutVariantSwitch)
+                  {
+                  iContainer->SetRect(ApplicationRect());
+                  }
+              }
+          Z3_EOF
+          mkdir -p symbian/app/src
+          cat > symbian/app/src/zelda3_audio.cpp <<'Z3_EOF'
+          // Audio output through CMdaAudioOutputStream (rate/channels come from the core, usually 32 kHz stereo).
+          #include "zelda3.h"
+
+          // TMdaAudioDataSettings values (the class is not visible through the Symbian^3 headers used here).
+          static TInt SettingsRate(TInt aHz)
+              {
+              switch (aHz)
+                  {
+                  case 8000:  return 0x00000001;
+                  case 11025: return 0x00000002;
+                  case 16000: return 0x00000004;
+                  case 22050: return 0x00000008;
+                  case 44100: return 0x00000020;
+                  case 48000: return 0x00000040;
+                  default:    return 0x00000010;   // 32000
+                  }
+              }
+
+          static const TInt KChannelsMono = 0x00000001;
+          static const TInt KChannelsStereo = 0x00000002;
+
+          CZelda3Audio* CZelda3Audio::NewL(TInt aRate, TInt aChannels)
+              {
+              CZelda3Audio* self = new (ELeave) CZelda3Audio(aRate, aChannels);
+              CleanupStack::PushL(self);
+              self->OpenStream();
+              CleanupStack::Pop(self);
+              return self;
+              }
+
+          CZelda3Audio::CZelda3Audio(TInt aRate, TInt aChannels)
+              : iRate(aRate), iChannels(aChannels)
+              {
+              for (TInt i = 0; i < KSlots; ++i)
+                  {
+                  iBusy[i] = EFalse;
+                  }
+              }
+
+          CZelda3Audio::~CZelda3Audio()
+              {
+              if (iStream)
+                  {
+                  iStream->Stop();
+                  delete iStream;
+                  }
+              }
+
+          void CZelda3Audio::OpenStream()
+              {
+              iReady = EFalse;
+              delete iStream;
+              iStream = NULL;
+              TRAPD(err, iStream = CMdaAudioOutputStream::NewL(*this));
+              if (err == KErrNone && iStream)
+                  {
+                  iStream->Open(NULL);
+                  }
+              }
+
+          void CZelda3Audio::MaoscOpenComplete(TInt aError)
+              {
+              if (aError != KErrNone)
+                  {
+                  return;
+                  }
+              TRAPD(err, iStream->SetAudioPropertiesL(SettingsRate(iRate),
+                                                      iChannels == 1 ? KChannelsMono : KChannelsStereo));
+              if (err != KErrNone)
+                  {
+                  return;
+                  }
+              iStream->SetVolume(iStream->MaxVolume() / 2);
+              iStream->SetPriority(EPriorityNormal, EMdaPriorityPreferenceTime);
+              iAcc.Zero();
+              iReady = ETrue;
+              }
+
+          void CZelda3Audio::MaoscBufferCopied(TInt /*aError*/, const TDesC8& aBuffer)
+              {
+              for (TInt i = 0; i < KSlots; ++i)
+                  {
+                  if (iSlot[i].Ptr() == aBuffer.Ptr())
+                      {
+                      iBusy[i] = EFalse;
+                      }
+                  }
+              }
+
+          void CZelda3Audio::MaoscPlayComplete(TInt /*aError*/)
+              {
+              for (TInt i = 0; i < KSlots; ++i)
+                  {
+                  iBusy[i] = EFalse;
+                  }
+              }
+
+          // Blocks of one emulated frame are collected into chunks of KChunkFrames before they are queued:
+          // very small buffers underrun on some devices.
+          void CZelda3Audio::Write(const TInt16* aSamples, TInt aBytes)
+              {
+              if (!iReady || iSuspended || aBytes <= 0)
+                  {
+                  return;
+                  }
+              if (iAcc.Length() + aBytes > KSlotBytes)
+                  {
+                  iAcc.Zero();    // should not happen; resynchronise
+                  }
+              iAcc.Append((const TUint8*)aSamples, aBytes);
+              if (iAcc.Length() < aBytes * KChunkFrames)
+                  {
+                  return;
+                  }
+              for (TInt i = 0; i < KSlots; ++i)
+                  {
+                  if (!iBusy[i])
+                      {
+                      iSlot[i].Copy(iAcc);
+                      iAcc.Zero();
+                      iBusy[i] = ETrue;
+                      TRAPD(err, iStream->WriteL(iSlot[i]));
+                      if (err != KErrNone)
+                          {
+                          iBusy[i] = EFalse;
+                          }
+                      return;
+                      }
+                  }
+              // all slots in flight: drop this chunk to keep latency bounded
+              iAcc.Zero();
+              }
+
+          void CZelda3Audio::Suspend()
+              {
+              iSuspended = ETrue;
+              if (iStream && iReady)
+                  {
+                  iStream->Stop();
+                  iReady = EFalse;
+                  }
+              }
+
+          void CZelda3Audio::Resume()
+              {
+              if (iSuspended)
+                  {
+                  iSuspended = EFalse;
+                  OpenStream();
+                  }
+              }
+          Z3_EOF
+          mkdir -p symbian/app/src
+          cat > symbian/app/src/zelda3_container.cpp <<'Z3_EOF'
+          // Main control: loading screen, game view, multi-touch pad, overlay menu.
+          #include <aknutils.h>
+          #include <avkon.hrh>
+          #include <eikon.hrh>
+          #include <eikenv.h>
+          #include <w32std.h>
+          #include <bautils.h>
+          #include "zelda3.h"
+
+          _LIT(KLoading1, "Loading Zelda3...");
+          _LIT(KLoading2, "(first start applies the asset patch to your ROM)");
+          _LIT(KErrTitle, "Zelda3 could not start");
+          _LIT(KErrHint, "Needed in <drive>:\\zelda3\\ : zelda3.sfc (US ROM), zelda3_assets.bps");
+
+          static const TInt KFrameMicros = 15000;
+
+          static const TInt KMenuCount = 7;
+
+          CZelda3Container* CZelda3Container::NewL(const TRect& aRect)
+              {
+              CZelda3Container* self = new (ELeave) CZelda3Container;
+              CleanupStack::PushL(self);
+              self->ConstructL(aRect);
+              CleanupStack::Pop(self);
+              return self;
+              }
+
+          CZelda3Container::CZelda3Container()
+              {
+              }
+
+          CZelda3Container::~CZelda3Container()
+              {
+              StopTimer();
+              delete iTimer;
+              delete iIdle;
+              delete iAudio;
+              delete iBitmap;
+              Z3_Shutdown();
+              iFs.Close();
+              }
+
+          void CZelda3Container::ConstructL(const TRect& aRect)
+              {
+              CreateWindowL();
+              SetExtentToWholeScreen();
+              EnableDragEvents();
+          #ifdef Z3_MULTITOUCH
+              Window().EnableAdvancedPointers();
+          #endif
+              SetFocusing(ETrue);
+
+              User::LeaveIfError(iFs.Connect());
+
+              iMode = ELoading;
+              iSound = ETrue;
+              iForeground = ETrue;
+              iScale = 0;
+              iMenuSel = 0;
+              for (TInt i = 0; i < KMaxPtrs; ++i)
+                  {
+                  iPtrDown[i] = EFalse;
+                  }
+
+              SetRect(aRect);
+              ActivateL();
+
+              iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
+              // start the game from the idle loop so that the loading screen is visible first
+              iIdle = CIdle::NewL(CActive::EPriorityIdle);
+              iIdle->Start(TCallBack(InitCb, this));
+              }
+
+          TInt CZelda3Container::InitCb(TAny* aPtr)
+              {
+              static_cast<CZelda3Container*>(aPtr)->DoInit();
+              return 0;
+              }
+
+          void CZelda3Container::SetError(const TDesC8& aText)
+              {
+              iErrLine1.Zero();
+              iErrLine2.Zero();
+              TInt len = aText.Length();
+              TInt split = 58;
+              if (len <= split)
+                  {
+                  iErrLine1.Copy(aText);
+                  }
+              else
+                  {
+                  TInt cut = split;
+                  while (cut > 20 && aText[cut] != 32)
+                      {
+                      --cut;
+                      }
+                  iErrLine1.Copy(aText.Left(cut));
+                  iErrLine2.Copy(aText.Mid(cut).Left(iErrLine2.MaxLength()));
+                  }
+              iMode = EError;
+              }
+
+          // First drive that has \zelda3\ with either a prepared assets file or the .bps patch.
+          TBool CZelda3Container::FindDataDir(TDes8& aPath)
+              {
+              TDriveList list;
+              if (iFs.DriveList(list) != KErrNone)
+                  {
+                  return EFalse;
+                  }
+              // E: (mass memory on N8) and F: (card) first, then C: and the rest
+              const TInt order[8] = { 4, 5, 2, 6, 7, 3, 8, 9 };
+              for (TInt k = 0; k < 8; ++k)
+                  {
+                  TInt d = order[k];
+                  if (d >= KMaxDrives || !list[d])
+                      {
+                      continue;
+                      }
+                  TChar letter(A + d);
+                  TFileName bps;
+                  bps.Append(letter);
+                  bps.Append(_L(":\\zelda3\\zelda3_assets.bps"));
+                  TFileName dat;
+                  dat.Append(letter);
+                  dat.Append(_L(":\\zelda3\\zelda3_assets.dat"));
+                  if (BaflUtils::FileExists(iFs, bps) || BaflUtils::FileExists(iFs, dat))
+                      {
+                      aPath.Zero();
+                      aPath.Append(letter);
+                      aPath.Append(_L8(":/zelda3"));
+                      return ETrue;
+                      }
+                  }
+              return EFalse;
+              }
+
+          void CZelda3Container::DoInit()
+              {
+              TBuf8<64> path;
+              if (!FindDataDir(path))
+                  {
+                  SetError(_L8("Folder zelda3 with zelda3_assets.bps not found on any drive."));
+                  DrawNow();
+                  return;
+                  }
+              path.ZeroTerminate();
+              if (Z3_Init((const char*)path.Ptr()) != 0)
+                  {
+                  TPtrC8 msg((const TUint8*)Z3_LastError());
+                  SetError(msg);
+                  DrawNow();
+                  return;
+                  }
+
+              iGameW = Z3_Width();
+              iGameH = Z3_Height();
+              iBitmap = new CFbsBitmap;
+              if (!iBitmap || iBitmap->Create(TSize(iGameW, iGameH), EColor16MU) != KErrNone)
+                  {
+                  SetError(_L8("Out of memory (screen buffer)."));
+                  DrawNow();
+                  return;
+                  }
+              iAudioBytes = Z3_AudioFrames() * Z3_AudioChannels() * 2;
+              if (Z3_AudioEnabled())
+                  {
+                  TRAPD(aerr, iAudio = CZelda3Audio::NewL(Z3_AudioRate(), Z3_AudioChannels()));
+                  if (aerr != KErrNone)
+                      {
+                      iAudio = NULL;      // run silently when the audio stream is unavailable
+                      }
+                  }
+              else
+                  {
+                  iSound = EFalse;
+                  }
+
+              iMode = EPlay;
+              iAcc = 0;
+              StartTimer();
+              DrawNow();
+              }
+
+          void CZelda3Container::StartTimer()
+              {
+              if (iTimer && !iTimer->IsActive())
+                  {
+                  iLastTick = User::NTickCount();
+                  iTimer->Start(KFrameMicros, KFrameMicros, TCallBack(TickCb, this));
+                  }
+              }
+
+          void CZelda3Container::StopTimer()
+              {
+              if (iTimer)
+                  {
+                  iTimer->Cancel();
+                  }
+              }
+
+          void CZelda3Container::SetForeground(TBool aForeground)
+              {
+              iForeground = aForeground;
+              if (!aForeground)
+                  {
+                  StopTimer();
+                  if (iAudio)
+                      {
+                      iAudio->Suspend();
+                      }
+                  }
+              else
+                  {
+                  if (iAudio && iSound)
+                      {
+                      iAudio->Resume();
+                      }
+                  if (iMode == EPlay)
+                      {
+                      StartTimer();
+                      }
+                  }
+              }
+
+          // ---------------------------------------------------------------------------
+          // Emulation tick: runs as many 60 Hz frames as the wall clock demands (max 3), draws the last one.
+          // ---------------------------------------------------------------------------
+          TInt CZelda3Container::TickCb(TAny* aPtr)
+              {
+              static_cast<CZelda3Container*>(aPtr)->Tick();
+              return 0;
+              }
+
+          void CZelda3Container::Tick()
+              {
+              if (iMode != EPlay || !iForeground)
+                  {
+                  return;
+                  }
+              TUint now = User::NTickCount();
+              TUint elapsed = now - iLastTick;
+              iLastTick = now;
+              if (elapsed > 200)
+                  {
+                  elapsed = 200;
+                  }
+              iAcc += (TInt)elapsed * 60;
+              TInt frames = iAcc / 1000;
+              iAcc -= frames * 1000;
+              if (frames < 1)
+                  {
+                  return;
+                  }
+              if (frames > 3)
+                  {
+                  frames = 3;
+                  iAcc = 0;
+                  }
+
+              const TInt pad = iKeyPad | iTouchPad;
+              TInt16 abuf[2048];
+              for (TInt i = 0; i < frames; ++i)
+                  {
+                  if (Z3_RunFrame(pad) != 0)
+                      {
+                      TPtrC8 msg((const TUint8*)Z3_LastError());
+                      SetError(msg);
+                      StopTimer();
+                      DrawNow();
+                      return;
+                      }
+                  if (iAudio && iSound && iAudioBytes <= (TInt)sizeof(abuf))
+                      {
+                      Z3_RenderAudio(abuf);
+                      iAudio->Write(abuf, iAudioBytes);
+                      }
+                  else if (Z3_AudioEnabled() && iAudioBytes <= (TInt)sizeof(abuf))
+                      {
+                      Z3_RenderAudio(abuf);       // keep the sound driver running while muted
+                      }
+                  }
+
+              iBitmap->LockHeap();
+              TUint8* dst = (TUint8*)iBitmap->DataAddress();
+              TInt stride = iBitmap->DataStride();
+              TInt rc = Z3_DrawFrame(dst, stride);
+              iBitmap->UnlockHeap();
+              if (rc != 0)
+                  {
+                  TPtrC8 msg((const TUint8*)Z3_LastError());
+                  SetError(msg);
+                  StopTimer();
+                  }
+              DrawNow();
+              }
+
+          // ---------------------------------------------------------------------------
+          // Menu
+          // ---------------------------------------------------------------------------
+          void CZelda3Container::OpenMenu()
+              {
+              iTouchPad = 0;
+              iKeyPad = 0;
+              for (TInt i = 0; i < KMaxPtrs; ++i)
+                  {
+                  iPtrDown[i] = EFalse;
+                  }
+              iMode = EMenu;
+              iMenuSel = 0;
+              StopTimer();
+              DrawNow();
+              }
+
+          void CZelda3Container::MenuActionL(TInt aIndex)
+              {
+              switch (aIndex)
+                  {
+                  case 0:     // resume
+                      break;
+                  case 1:     // save state
+                      Z3_Command(Z3_CMD_SAVE, 0);
+                      break;
+                  case 2:     // load state
+                      Z3_Command(Z3_CMD_LOAD, 0);
+                      break;
+                  case 3:     // reset
+                      Z3_Command(Z3_CMD_RESET, 0);
+                      break;
+                  case 4:     // scaling
+                      iScale = (iScale + 1) % 3;
+                      DrawNow();
+                      return;
+                  case 5:     // sound
+                      iSound = !iSound;
+                      if (iAudio)
+                          {
+                          if (iSound) iAudio->Resume(); else iAudio->Suspend();
+                          }
+                      DrawNow();
+                      return;
+                  default:    // exit
+                      iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+                      return;
+                  }
+              iMode = EPlay;
+              StartTimer();
+              DrawNow();
+              }
+
+          // ---------------------------------------------------------------------------
+          // Layout and drawing
+          // ---------------------------------------------------------------------------
+          void CZelda3Container::SizeChanged()
+              {
+              ComputeLayout();
+              }
+
+          void CZelda3Container::ComputeLayout()
+              {
+              TRect r = Rect();
+              TInt w = r.Width(), h = r.Height();
+              TInt R = Min(h / 4, w / 6);
+              if (R < 30) R = 30;
+              iDpadR = R;
+              iDpadCentre = TPoint(R + 8, h - R - 24);
+
+              // diamond of face buttons: A right, B bottom, X top, Y left (SNES layout)
+              TInt br = R * 3 / 10;
+              TPoint c(w - R - 8, h - R - 24);
+              TInt off = br * 12 / 10;
+              iBtnA = TRect(c.iX + off - br, c.iY - br, c.iX + off + br, c.iY + br);
+              iBtnY = TRect(c.iX - off - br, c.iY - br, c.iX - off + br, c.iY + br);
+              iBtnX = TRect(c.iX - br, c.iY - off - br, c.iX + br, c.iY - off + br);
+              iBtnB = TRect(c.iX - br, c.iY + off - br, c.iX + br, c.iY + off + br);
+
+              TInt sw = 84, sh = 36;
+              iBtnL = TRect(6, 6, 6 + 90, 6 + 44);
+              iBtnR = TRect(w - 96, 6, w - 6, 50);
+              iBtnSelect = TRect(w / 2 - sw - 8, h - sh - 6, w / 2 - 8, h - 6);
+              iBtnStart = TRect(w / 2 + 8, h - sh - 6, w / 2 + sw + 8, h - 6);
+              iBtnMenu = TRect(w / 2 - 40, 4, w / 2 + 40, 40);
+              }
+
+          TRect CZelda3Container::GameRect() const
+              {
+              TRect r = Rect();
+              TInt w = r.Width(), h = r.Height();
+              TInt dw, dh;
+              if (iScale == 2)
+                  {
+                  return TRect(0, 0, w, h);
+                  }
+              if (iScale == 0)
+                  {
+                  if (h * iGameW <= w * iGameH)
+                      {
+                      dh = h;
+                      dw = h * iGameW / iGameH;
+                      }
+                  else
+                      {
+                      dw = w;
+                      dh = w * iGameH / iGameW;
+                      }
+                  }
+              else
+                  {
+                  dw = iGameW;
+                  dh = iGameH;
+                  }
+              TInt x = (w - dw) / 2;
+              TInt y = (h - dh) / 2;
+              return TRect(x, y, x + dw, y + dh);
+              }
+
+          void CZelda3Container::DrawButton(CWindowGc& aGc, const TRect& aRect, const TDesC& aLabel, TBool aDown) const
+              {
+              aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+              aGc.SetPenColor(KRgbGray);
+              if (aDown)
+                  {
+                  aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+                  aGc.SetBrushColor(TRgb(70, 70, 110));
+                  }
+              else
+                  {
+                  aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+                  aGc.SetBrushColor(KRgbBlack);
+                  }
+              aGc.DrawRect(aRect);
+              aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+              const CFont* font = iEikonEnv->NormalFont();
+              aGc.UseFont(font);
+              aGc.SetPenColor(KRgbWhite);
+              TInt base = (aRect.Height() + font->AscentInPixels() - font->DescentInPixels()) / 2;
+              aGc.DrawText(aLabel, aRect, base, CGraphicsContext::ECenter, 0);
+              aGc.DiscardFont();
+              }
+
+          void CZelda3Container::DrawPad(CWindowGc& aGc) const
+              {
+              const TInt p = iKeyPad | iTouchPad;
+              aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+              aGc.SetPenColor(KRgbGray);
+              aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+              aGc.SetBrushColor(KRgbBlack);
+              TRect pad(iDpadCentre.iX - iDpadR, iDpadCentre.iY - iDpadR, iDpadCentre.iX + iDpadR, iDpadCentre.iY + iDpadR);
+              aGc.DrawEllipse(pad);
+              TInt q = iDpadR / 3;
+              TRect up(iDpadCentre.iX - q, iDpadCentre.iY - iDpadR, iDpadCentre.iX + q, iDpadCentre.iY - q);
+              TRect dn(iDpadCentre.iX - q, iDpadCentre.iY + q, iDpadCentre.iX + q, iDpadCentre.iY + iDpadR);
+              TRect lf(iDpadCentre.iX - iDpadR, iDpadCentre.iY - q, iDpadCentre.iX - q, iDpadCentre.iY + q);
+              TRect rt(iDpadCentre.iX + q, iDpadCentre.iY - q, iDpadCentre.iX + iDpadR, iDpadCentre.iY + q);
+              aGc.SetBrushColor(TRgb(70, 70, 110));
+              if (p & Z3_PAD_UP) aGc.DrawRect(up);
+              if (p & Z3_PAD_DOWN) aGc.DrawRect(dn);
+              if (p & Z3_PAD_LEFT) aGc.DrawRect(lf);
+              if (p & Z3_PAD_RIGHT) aGc.DrawRect(rt);
+              aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+              aGc.DrawLine(TPoint(iDpadCentre.iX - iDpadR, iDpadCentre.iY), TPoint(iDpadCentre.iX + iDpadR, iDpadCentre.iY));
+              aGc.DrawLine(TPoint(iDpadCentre.iX, iDpadCentre.iY - iDpadR), TPoint(iDpadCentre.iX, iDpadCentre.iY + iDpadR));
+              DrawButton(aGc, iBtnA, _L("A"), p & Z3_PAD_A);
+              DrawButton(aGc, iBtnB, _L("B"), p & Z3_PAD_B);
+              DrawButton(aGc, iBtnX, _L("X"), p & Z3_PAD_X);
+              DrawButton(aGc, iBtnY, _L("Y"), p & Z3_PAD_Y);
+              DrawButton(aGc, iBtnL, _L("L"), p & Z3_PAD_L);
+              DrawButton(aGc, iBtnR, _L("R"), p & Z3_PAD_R);
+              DrawButton(aGc, iBtnSelect, _L("Select"), p & Z3_PAD_SELECT);
+              DrawButton(aGc, iBtnStart, _L("Start"), p & Z3_PAD_START);
+              DrawButton(aGc, iBtnMenu, _L("Menu"), EFalse);
+              }
+
+          void CZelda3Container::DrawCentred(CWindowGc& aGc, const TDesC& aText, TInt aY) const
+              {
+              const CFont* font = iEikonEnv->NormalFont();
+              aGc.UseFont(font);
+              TRect line(0, aY, Rect().Width(), aY + font->HeightInPixels() + 8);
+              aGc.DrawText(aText, line, aY + font->AscentInPixels() + 4 - aY, CGraphicsContext::ECenter, 0);
+              aGc.DiscardFont();
+              }
+
+          void CZelda3Container::DrawMenu(CWindowGc& aGc) const
+              {
+              TRect r = Rect();
+              TInt w = 340, rh = 40, h = KMenuCount * rh;
+              TRect box((r.Width() - w) / 2, (r.Height() - h) / 2, (r.Width() + w) / 2, (r.Height() + h) / 2);
+              aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+              aGc.SetPenColor(KRgbGray);
+              aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+              aGc.SetBrushColor(TRgb(20, 20, 40));
+              aGc.DrawRect(box);
+              const CFont* font = iEikonEnv->NormalFont();
+              aGc.UseFont(font);
+              for (TInt i = 0; i < KMenuCount; ++i)
+                  {
+                  TRect row(box.iTl.iX + 2, box.iTl.iY + i * rh + 2, box.iBr.iX - 2, box.iTl.iY + (i + 1) * rh - 2);
+                  if (i == iMenuSel)
+                      {
+                      aGc.SetBrushColor(TRgb(70, 70, 140));
+                      aGc.SetPenStyle(CGraphicsContext::ENullPen);
+                      aGc.DrawRect(row);
+                      aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+                      }
+                  aGc.SetPenColor(KRgbWhite);
+                  TBuf<40> label;
+                  switch (i)
+                      {
+                      case 0: label = _L("Resume"); break;
+                      case 1: label = _L("Save state"); break;
+                      case 2: label = _L("Load state"); break;
+                      case 3: label = _L("Reset"); break;
+                      case 4: label = iScale == 0 ? _L("Scale: fit") : (iScale == 1 ? _L("Scale: native") : _L("Scale: stretch")); break;
+                      case 5: label = iSound ? _L("Sound: on") : _L("Sound: off"); break;
+                      default: label = _L("Exit"); break;
+                      }
+                  TInt base = (row.Height() + font->AscentInPixels() - font->DescentInPixels()) / 2;
+                  aGc.DrawText(label, row, base, CGraphicsContext::ECenter, 0);
+                  aGc.SetBrushColor(TRgb(20, 20, 40));
+                  }
+              aGc.DiscardFont();
+              }
+
+          void CZelda3Container::Draw(const TRect& /*aRect*/) const
+              {
+              CWindowGc& gc = SystemGc();
+              gc.SetPenStyle(CGraphicsContext::ESolidPen);
+              gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+              gc.SetBrushColor(KRgbBlack);
+
+              if (iMode == ELoading || iMode == EError)
+                  {
+                  gc.Clear(Rect());
+                  gc.SetPenColor(KRgbWhite);
+                  TInt y = Rect().Height() / 2 - 50;
+                  if (iMode == ELoading)
+                      {
+                      DrawCentred(gc, KLoading1, y);
+                      DrawCentred(gc, KLoading2, y + 34);
+                      }
+                  else
+                      {
+                      DrawCentred(gc, KErrTitle, y);
+                      DrawCentred(gc, iErrLine1, y + 34);
+                      DrawCentred(gc, iErrLine2, y + 60);
+                      DrawCentred(gc, KErrHint, y + 100);
+                      }
+                  return;
+                  }
+
+              TRect g = GameRect();
+              // only the margins are cleared; the game rectangle is repainted by the bitmap itself
+              TRect r = Rect();
+              if (g.iTl.iY > r.iTl.iY) gc.Clear(TRect(r.iTl.iX, r.iTl.iY, r.iBr.iX, g.iTl.iY));
+              if (g.iBr.iY < r.iBr.iY) gc.Clear(TRect(r.iTl.iX, g.iBr.iY, r.iBr.iX, r.iBr.iY));
+              if (g.iTl.iX > r.iTl.iX) gc.Clear(TRect(r.iTl.iX, g.iTl.iY, g.iTl.iX, g.iBr.iY));
+              if (g.iBr.iX < r.iBr.iX) gc.Clear(TRect(g.iBr.iX, g.iTl.iY, r.iBr.iX, g.iBr.iY));
+              if (iBitmap)
+                  {
+                  if (g.Width() == iGameW && g.Height() == iGameH)
+                      {
+                      gc.BitBlt(g.iTl, iBitmap);
+                      }
+                  else
+                      {
+                      gc.DrawBitmap(g, iBitmap);
+                      }
+                  }
+              DrawPad(gc);
+              if (iMode == EMenu)
+                  {
+                  DrawMenu(gc);
+                  }
+              }
+
+          // ---------------------------------------------------------------------------
+          // Input
+          // ---------------------------------------------------------------------------
+          TInt CZelda3Container::PadFromPoint(const TPoint& aPt) const
+              {
+              TInt bits = 0;
+              if (iBtnA.Contains(aPt)) bits |= Z3_PAD_A;
+              if (iBtnB.Contains(aPt)) bits |= Z3_PAD_B;
+              if (iBtnX.Contains(aPt)) bits |= Z3_PAD_X;
+              if (iBtnY.Contains(aPt)) bits |= Z3_PAD_Y;
+              if (iBtnL.Contains(aPt)) bits |= Z3_PAD_L;
+              if (iBtnR.Contains(aPt)) bits |= Z3_PAD_R;
+              if (iBtnSelect.Contains(aPt)) bits |= Z3_PAD_SELECT;
+              if (iBtnStart.Contains(aPt)) bits |= Z3_PAD_START;
+              TInt dx = aPt.iX - iDpadCentre.iX;
+              TInt dy = aPt.iY - iDpadCentre.iY;
+              TInt lim = iDpadR + iDpadR / 3;
+              if (dx > -lim && dx < lim && dy > -lim && dy < lim)
+                  {
+                  TInt dead = iDpadR / 4;
+                  if (dx < -dead) bits |= Z3_PAD_LEFT;
+                  if (dx > dead) bits |= Z3_PAD_RIGHT;
+                  if (dy < -dead) bits |= Z3_PAD_UP;
+                  if (dy > dead) bits |= Z3_PAD_DOWN;
+                  }
+              return bits;
+              }
+
+          void CZelda3Container::UpdateTouchPad()
+              {
+              TInt bits = 0;
+              for (TInt i = 0; i < KMaxPtrs; ++i)
+                  {
+                  if (iPtrDown[i])
+                      {
+                      bits |= PadFromPoint(iPtrPos[i]);
+                      }
+                  }
+              iTouchPad = bits;
+              }
+
+          void CZelda3Container::HandlePointerEventL(const TPointerEvent& aEvent)
+              {
+              const TPoint pt = aEvent.iPosition;
+              TInt id = 0;
+          #ifdef Z3_MULTITOUCH
+              const TAdvancedPointerEvent* adv = aEvent.AdvancedPointerEvent();
+              if (adv)
+                  {
+                  id = adv->PointerNumber();
+                  }
+          #endif
+              if (id < 0 || id >= KMaxPtrs)
+                  {
+                  return;
+                  }
+
+              if (iMode == EPlay)
+                  {
+                  if (aEvent.iType == TPointerEvent::EButton1Down && iBtnMenu.Contains(pt))
+                      {
+                      OpenMenu();
+                      return;
+                      }
+                  if (aEvent.iType == TPointerEvent::EButton1Down || aEvent.iType == TPointerEvent::EDrag)
+                      {
+                      iPtrDown[id] = ETrue;
+                      iPtrPos[id] = pt;
+                      }
+                  else if (aEvent.iType == TPointerEvent::EButton1Up)
+                      {
+                      iPtrDown[id] = EFalse;
+                      }
+                  UpdateTouchPad();
+                  return;
+                  }
+
+              if (iMode == EMenu)
+                  {
+                  if (aEvent.iType == TPointerEvent::EButton1Up)
+                      {
+                      TRect r = Rect();
+                      TInt w = 340, rh = 40, h = KMenuCount * rh;
+                      TRect box((r.Width() - w) / 2, (r.Height() - h) / 2, (r.Width() + w) / 2, (r.Height() + h) / 2);
+                      if (box.Contains(pt))
+                          {
+                          MenuActionL((pt.iY - box.iTl.iY) / rh);
+                          }
+                      else
+                          {
+                          MenuActionL(0);
+                          }
+                      }
+                  return;
+                  }
+
+              if (iMode == EError && aEvent.iType == TPointerEvent::EButton1Up)
+                  {
+                  iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+                  }
+              }
+
+          TKeyResponse CZelda3Container::OfferKeyEventL(const TKeyEvent& aKey, TEventCode aType)
+              {
+              const TInt sc = aKey.iScanCode;
+
+              if (iMode == EPlay)
+                  {
+                  TInt bit = 0;
+                  switch (sc)
+                      {
+                      case EStdKeyUpArrow:    bit = Z3_PAD_UP; break;
+                      case EStdKeyDownArrow:  bit = Z3_PAD_DOWN; break;
+                      case EStdKeyLeftArrow:  bit = Z3_PAD_LEFT; break;
+                      case EStdKeyRightArrow: bit = Z3_PAD_RIGHT; break;
+                      case X:               bit = Z3_PAD_A; break;
+                      case Z:               bit = Z3_PAD_B; break;
+                      case S:               bit = Z3_PAD_X; break;
+                      case A:               bit = Z3_PAD_Y; break;
+                      case C:               bit = Z3_PAD_L; break;
+                      case V:               bit = Z3_PAD_R; break;
+                      case EStdKeyEnter: case EStdKeyDevice3: bit = Z3_PAD_START; break;
+                      case EStdKeySpace: case EStdKeyBackspace: bit = Z3_PAD_SELECT; break;
+                      default: break;
+                      }
+                  if (aType == EEventKeyDown && sc == EStdKeyDevice0)      // left soft key
+                      {
+                      OpenMenu();
+                      return EKeyWasConsumed;
+                      }
+                  if (bit)
+                      {
+                      if (aType == EEventKeyDown) iKeyPad |= bit;
+                      else if (aType == EEventKeyUp) iKeyPad &= ~bit;
+                      return EKeyWasConsumed;
+                      }
+                  return EKeyWasNotConsumed;
+                  }
+
+              if (aType != EEventKeyDown)
+                  {
+                  return (sc == EStdKeyUpArrow || sc == EStdKeyDownArrow || sc == EStdKeyEnter ||
+                          sc == EStdKeyDevice3 || sc == EStdKeyDevice0) ? EKeyWasConsumed : EKeyWasNotConsumed;
+                  }
+
+              if (iMode == EMenu)
+                  {
+                  if (sc == EStdKeyUpArrow && iMenuSel > 0) --iMenuSel;
+                  else if (sc == EStdKeyDownArrow && iMenuSel < KMenuCount - 1) ++iMenuSel;
+                  else if (sc == EStdKeyEnter || sc == EStdKeyDevice3) { MenuActionL(iMenuSel); return EKeyWasConsumed; }
+                  else if (sc == EStdKeyDevice0) { MenuActionL(0); return EKeyWasConsumed; }
+                  else return EKeyWasNotConsumed;
+                  DrawNow();
+                  return EKeyWasConsumed;
+                  }
+
+              if (iMode == EError && (sc == EStdKeyEnter || sc == EStdKeyDevice3 || sc == EStdKeyDevice0))
+                  {
+                  iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+                  return EKeyWasConsumed;
+                  }
+              return EKeyWasNotConsumed;
+              }
+          Z3_EOF
+          mkdir -p symbian/compat
+          cat > symbian/compat/SDL.h <<'Z3_EOF'
+          // SDL stand-in for the Symbian port: only what config.c needs.
+          #ifndef Z3_COMPAT_SDL_H
+          #define Z3_COMPAT_SDL_H
+          #include <stdint.h>
+          #include <stdbool.h>
+          #include <SDL_keycode.h>
+          typedef struct SDL_Window SDL_Window;
+          #endif
+          Z3_EOF
+          mkdir -p symbian/compat
+          cat > symbian/compat/SDL_keycode.h <<'Z3_EOF'
+          // Minimal SDL key definitions so config.c/config.h build without SDL (Symbian port).
+          #ifndef Z3_COMPAT_SDL_KEYCODE_H
+          #define Z3_COMPAT_SDL_KEYCODE_H
+
+          typedef int SDL_Keycode;
+          typedef int SDL_Keymod;
+
+          #define SDLK_SCANCODE_MASK (1 << 30)
+          #define Z3_SC(x) ((x) | SDLK_SCANCODE_MASK)
+
+          enum {
+            SDLK_UNKNOWN = 0,
+            SDLK_RETURN = 13,
+            SDLK_TAB = 9,
+            SDLK_a = 97, SDLK_c = 99, SDLK_e = 101, SDLK_f = 102, SDLK_k = 107, SDLK_l = 108,
+            SDLK_o = 111, SDLK_p = 112, SDLK_r = 114, SDLK_s = 115, SDLK_t = 116, SDLK_v = 118,
+            SDLK_w = 119, SDLK_x = 120, SDLK_z = 122,
+            SDLK_F1 = Z3_SC(58), SDLK_F2 = Z3_SC(59), SDLK_F3 = Z3_SC(60), SDLK_F4 = Z3_SC(61),
+            SDLK_F5 = Z3_SC(62), SDLK_F6 = Z3_SC(63), SDLK_F7 = Z3_SC(64), SDLK_F8 = Z3_SC(65),
+            SDLK_F9 = Z3_SC(66), SDLK_F10 = Z3_SC(67),
+            SDLK_RIGHT = Z3_SC(79), SDLK_LEFT = Z3_SC(80), SDLK_DOWN = Z3_SC(81), SDLK_UP = Z3_SC(82),
+            SDLK_LCTRL = Z3_SC(224), SDLK_LSHIFT = Z3_SC(225), SDLK_LALT = Z3_SC(226),
+            SDLK_RCTRL = Z3_SC(228), SDLK_RSHIFT = Z3_SC(229), SDLK_RALT = Z3_SC(230)
+          };
+
+          enum { KMOD_SHIFT = 0x0003, KMOD_CTRL = 0x00c0, KMOD_ALT = 0x0300 };
+
+          // Only single characters are understood; the Symbian front end does not use the .ini key map.
+          static inline SDL_Keycode SDL_GetKeyFromName(const char *name) {
+            if (name && name[0] && !name[1]) {
+              char c = name[0];
+              if (c >= 65 && c <= 90) c = (char)(c + 32);
+              return (SDL_Keycode)c;
+            }
+            return SDLK_UNKNOWN;
+          }
+
+          #endif
+          Z3_EOF
+          mkdir -p symbian/core
+          cat > symbian/core/opus_stub.c <<'Z3_EOF'
+          // MSU (Opus) audio is not supported on Symbian: link-time stubs for audio.c.
+          #include <stdarg.h>
+          #include <stddef.h>
+          #include "third_party/opus-1.3.1-stripped/opus.h"
+
+          OpusDecoder *opus_decoder_create(opus_int32 Fs, int channels, int *error) {
+            (void)Fs; (void)channels;
+            if (error) *error = OPUS_ALLOC_FAIL;
+            return NULL;
+          }
+
+          void opus_decoder_destroy(OpusDecoder *st) {
+            (void)st;
+          }
+
+          int opus_decoder_ctl(OpusDecoder *st, int request, ...) {
+            (void)st; (void)request;
+            return OPUS_UNIMPLEMENTED;
+          }
+
+          int opus_decode(OpusDecoder *st, const unsigned char *data, opus_int32 len,
+                          opus_int16 *pcm, int frame_size, int decode_fec) {
+            (void)st; (void)data; (void)len; (void)pcm; (void)frame_size; (void)decode_fec;
+            return OPUS_UNIMPLEMENTED;
+          }
+          Z3_EOF
+          mkdir -p symbian/core
+          cat > symbian/core/z3_platform.c <<'Z3_EOF'
+          // z3_platform.c - replaces src/main.c on Symbian: no SDL, the front end drives the frame loop.
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <setjmp.h>
+          #include <unistd.h>
+          #include <sys/stat.h>
+          #include <sys/types.h>
+
+          #include "snes/ppu.h"
+          #include "src/types.h"
+          #include "src/variables.h"
+          #include "src/zelda_rtl.h"
+          #include "src/zelda_cpu_infra.h"
+          #include "src/config.h"
+          #include "src/assets.h"
+          #include "src/load_gfx.h"
+          #include "src/util.h"
+          #include "src/audio.h"
+          #include "z3_platform.h"
+
+          enum { kDefaultFreq = 32000, kDefaultChannels = 2 };
+
+          static jmp_buf g_jmp;
+          static int g_jmp_armed;
+          static int g_dead;
+          static int g_inited;
+          static char g_err[160];
+
+          static int g_snes_width, g_snes_height;
+          static int g_ppu_render_flags;
+          static int g_frames_per_block;
+          static int g_audio_channels;
+          static int g_audio_enabled;
+
+          const uint8 *g_asset_ptrs[kNumberOfAssets];
+          uint32 g_asset_sizes[kNumberOfAssets];
+
+          void NORETURN Die(const char *error) {
+            strncpy(g_err, error ? error : "error", sizeof(g_err) - 1);
+            g_err[sizeof(g_err) - 1] = 0;
+            fprintf(stderr, "Error: %s\n", g_err);
+            if (g_jmp_armed) {
+              g_jmp_armed = 0;
+              longjmp(g_jmp, 1);
+            }
+            exit(1);
+          }
+
+          // The front end is single threaded: audio is rendered from the frame loop, so no locking.
+          void ZeldaApuLock() {}
+          void ZeldaApuUnlock() {}
+
+          const char *Z3_LastError(void) { return g_err; }
+          int Z3_Width(void) { return g_snes_width; }
+          int Z3_Height(void) { return g_snes_height; }
+          int Z3_AudioRate(void) { return g_config.audio_freq; }
+          int Z3_AudioChannels(void) { return g_audio_channels; }
+          int Z3_AudioFrames(void) { return g_frames_per_block; }
+          int Z3_AudioEnabled(void) { return g_audio_enabled; }
+
+          MemBlk FindInAssetArray(int asset, int idx) {
+            return FindIndexInMemblk((MemBlk) { g_asset_ptrs[asset], g_asset_sizes[asset] }, idx);
+          }
+
+          static uint32 ReadLE32(const uint8 *p) {
+            return (uint32)p[0] | ((uint32)p[1] << 8) | ((uint32)p[2] << 16) | ((uint32)p[3] << 24);
+          }
+
+          // Same logic as LoadAssets() in main.c: zelda3_assets.dat, or zelda3_assets.bps applied to zelda3.sfc.
+          static void LoadAssets(void) {
+            size_t length = 0;
+            uint8 *data = ReadWholeFile("zelda3_assets.dat", &length);
+            if (!data) {
+              size_t bps_length = 0, bps_src_length = 0;
+              uint8 *bps = ReadWholeFile("zelda3_assets.bps", &bps_length);
+              if (!bps)
+                Die("zelda3_assets.dat / zelda3_assets.bps not found in the game folder.");
+              uint8 *bps_src = ReadWholeFile("zelda3.sfc", &bps_src_length);
+              if (!bps_src)
+                Die("zelda3.sfc (US ROM) not found in the game folder.");
+              data = ApplyBps(bps_src, bps_src_length, bps, bps_length, &length);
+              free(bps);
+              free(bps_src);
+              if (!data)
+                Die("zelda3_assets.bps does not match this zelda3.sfc. Use the US ROM.");
+            }
+            static const char kAssetsSig[] = { kAssets_Sig };
+            if (length < 16 + 32 + 32 + 8 + kNumberOfAssets * 4 ||
+                memcmp(data, kAssetsSig, 48) != 0 ||
+                ReadLE32(data + 80) != kNumberOfAssets)
+              Die("Invalid assets file.");
+            uint32 offset = 88 + kNumberOfAssets * 4 + ReadLE32(data + 84);
+            for (size_t i = 0; i < kNumberOfAssets; i++) {
+              uint32 size = ReadLE32(data + 88 + i * 4);
+              offset = (offset + 3) & ~3u;
+              if ((uint64)offset + size > length)
+                Die("Assets file is corrupt.");
+              g_asset_sizes[i] = size;
+              g_asset_ptrs[i] = data + offset;
+              offset += size;
+            }
+            if (g_config.features0 & kFeatures0_DimFlashes) {  // patch dungeon floor palettes
+              kPalette_DungBgMain[0x484] = 0x70;
+              kPalette_DungBgMain[0x485] = 0x95;
+              kPalette_DungBgMain[0x486] = 0x57;
+            }
+          }
+
+          int Z3_Init(const char *basedir) {
+            if (g_inited) return 0;
+            g_err[0] = 0;
+            if (setjmp(g_jmp)) {
+              g_dead = 1;
+              return -1;
+            }
+            g_jmp_armed = 1;
+
+            if (basedir && chdir(basedir) != 0)
+              Die("Cannot open the game folder.");
+            mkdir("saves", 0755);
+
+            ParseConfigFile(NULL);
+            if (g_config.audio_freq < 8000 || g_config.audio_freq > 48000)
+              g_config.audio_freq = kDefaultFreq;
+            if (g_config.audio_channels < 1 || g_config.audio_channels > 2)
+              g_config.audio_channels = kDefaultChannels;
+
+            LoadAssets();
+            ZeldaInitialize();
+
+            g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
+            g_snes_width = g_config.extended_aspect_ratio * 2 + 256;
+            g_snes_height = g_config.extend_y ? 240 : 224;
+
+            g_wanted_zelda_features = g_config.features0;
+            g_ppu_render_flags = g_config.new_renderer * kPpuRenderFlags_NewRenderer |
+                                 g_config.extend_y * kPpuRenderFlags_Height240 |
+                                 g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
+            // enhanced mode7 (4x4 scale) and MSU are not supported on this front end.
+            ZeldaEnableMsu(0);
+            ZeldaSetLanguage(g_config.language);
+
+            g_audio_enabled = g_config.enable_audio;
+            g_audio_channels = g_config.audio_channels;
+            g_frames_per_block = (534 * g_config.audio_freq) / 32000;
+
+            ZeldaReadSram();
+            g_inited = 1;
+            g_jmp_armed = 0;
+            return 0;
+          }
+
+          int Z3_RunFrame(int pad_bits) {
+            if (g_dead || !g_inited) return -1;
+            if (setjmp(g_jmp)) {
+              g_dead = 1;
+              return -1;
+            }
+            g_jmp_armed = 1;
+            ZeldaRunFrame(pad_bits);
+            g_jmp_armed = 0;
+            return 0;
+          }
+
+          int Z3_DrawFrame(unsigned char *pixels, int pitch) {
+            if (g_dead || !g_inited) return -1;
+            if (setjmp(g_jmp)) {
+              g_dead = 1;
+              return -1;
+            }
+            g_jmp_armed = 1;
+            ZeldaDrawPpuFrame(pixels, (size_t)pitch, g_ppu_render_flags);
+            g_jmp_armed = 0;
+            return 0;
+          }
+
+          int Z3_RenderAudio(short *out) {
+            if (g_dead || !g_inited) return 0;
+            ZeldaRenderAudio((int16 *)out, g_frames_per_block, g_audio_channels);
+            ZeldaDiscardUnusedAudioFrames();
+            return g_frames_per_block;
+          }
+
+          void Z3_Command(int cmd, int arg) {
+            if (g_dead || !g_inited) return;
+            if (setjmp(g_jmp)) {
+              g_dead = 1;
+              return;
+            }
+            g_jmp_armed = 1;
+            switch (cmd) {
+            case Z3_CMD_RESET: ZeldaReset(true); break;
+            case Z3_CMD_SAVE: SaveLoadSlot(kSaveLoad_Save, arg); break;
+            case Z3_CMD_LOAD: SaveLoadSlot(kSaveLoad_Load, arg); break;
+            case Z3_CMD_CHEAT_LIFE: PatchCommand(0x77 /* w */); break;
+            case Z3_CMD_CHEAT_EQUIP: PatchCommand(0x57 /* W */); break;
+            default: break;
+            }
+            g_jmp_armed = 0;
+          }
+
+          void Z3_Shutdown(void) {
+            g_inited = 0;
+          }
+          Z3_EOF
+          mkdir -p symbian/core
+          cat > symbian/core/z3_platform.h <<'Z3_EOF'
+          // z3_platform.h - C interface between the zelda3 core and the Symbian front end.
+          #ifndef Z3_PLATFORM_H
+          #define Z3_PLATFORM_H
+
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+
+          /* SNES joypad bit layout (same as g_input1_state in the desktop build). */
+          enum {
+            Z3_PAD_B = 1 << 0, Z3_PAD_Y = 1 << 1, Z3_PAD_SELECT = 1 << 2, Z3_PAD_START = 1 << 3,
+            Z3_PAD_UP = 1 << 4, Z3_PAD_DOWN = 1 << 5, Z3_PAD_LEFT = 1 << 6, Z3_PAD_RIGHT = 1 << 7,
+            Z3_PAD_A = 1 << 8, Z3_PAD_X = 1 << 9, Z3_PAD_L = 1 << 10, Z3_PAD_R = 1 << 11
+          };
+
+          enum { Z3_CMD_RESET = 1, Z3_CMD_SAVE = 2, Z3_CMD_LOAD = 3, Z3_CMD_CHEAT_LIFE = 4, Z3_CMD_CHEAT_EQUIP = 5 };
+
+          /* Load config + assets, start the game. basedir is a path such as "E:/zelda3".
+             Returns 0 on success; otherwise Z3_LastError() describes what went wrong. */
+          int Z3_Init(const char *basedir);
+          const char *Z3_LastError(void);
+
+          int Z3_Width(void);          /* output size in pixels */
+          int Z3_Height(void);
+          int Z3_AudioRate(void);      /* Hz */
+          int Z3_AudioChannels(void);  /* 1 or 2 */
+          int Z3_AudioFrames(void);    /* sample frames produced per emulated frame */
+          int Z3_AudioEnabled(void);
+
+          /* One emulated frame. Returns 0, or -1 if the game aborted. */
+          int Z3_RunFrame(int pad_bits);
+          /* Renders the current PPU state into a 32-bit 0x00RRGGBB buffer. */
+          int Z3_DrawFrame(unsigned char *pixels, int pitch);
+          /* Renders one frame of audio; out holds Z3_AudioFrames()*Z3_AudioChannels() samples. */
+          int Z3_RenderAudio(short *out);
+
+          void Z3_Command(int cmd, int arg);
+          void Z3_Shutdown(void);
+
+          #ifdef __cplusplus
+          }
+          #endif
+          #endif
+          Z3_EOF
+          mkdir -p symbian/tools
+          cat > symbian/tools/host_check.c <<'Z3_EOF'
+          #include "z3_platform.h"
+          #include <stdio.h>
+          int main(int argc, char **argv) {
+            if (Z3_Init(argc > 1 ? argv[1] : 0)) { printf("init failed: %s\n", Z3_LastError()); return 1; }
+            static unsigned char px[512*4*240];
+            for (int i = 0; i < 120; i++) { Z3_RunFrame(0); Z3_DrawFrame(px, Z3_Width()*4); short a[2048]; Z3_RenderAudio(a); }
+            printf("ok %dx%d\n", Z3_Width(), Z3_Height());
+            return 0;
+          }
+          Z3_EOF
+          mkdir -p symbian/tools
+          cat > symbian/tools/patch_symbian.py <<'Z3_EOF'
+          #!/usr/bin/env python3
+          """Prepares the zelda3 sources for the Symbian^3 build (run from the repo root).
+
+          * makes WORD()/DWORD()/load24() and raw (u)int16/32/64 pointer casts alignment-safe (ARM)
+          * writes symbian/zelda3.ini (device defaults)
+          * writes symbian/app/group/zelda3.mmp from symbian/app/group/zelda3.mmp.in + the source list
+          """
+          import glob, os, re, sys
+
+          def rd(p): return open(p, newline="").read()
+          def wr(p, s): open(p, "w", newline="").write(s)
+
+          EXCLUDE = {"src/main.c", "src/opengl.c", "src/glsl_shader.c"}
+
+          # ---------------------------------------------------------------- types.h
+          s = rd("src/types.h")
+          if "uint16_ua" not in s:
+              nl = "\r\n" if "\r\n" in s else "\n"
+              anchor = "typedef unsigned int uint;" + nl
+              assert anchor in s, "types.h anchor not found"
+              s = s.replace(anchor, anchor +
+                  "typedef uint16_t uint16_ua __attribute__((aligned(1)));" + nl +
+                  "typedef int16_t  int16_ua  __attribute__((aligned(1)));" + nl +
+                  "typedef uint32_t uint32_ua __attribute__((aligned(1)));" + nl +
+                  "typedef int32_t  int32_ua  __attribute__((aligned(1)));" + nl +
+                  "typedef uint64_t uint64_ua __attribute__((aligned(1)));" + nl, 1)
+              for a, b in [("(*(uint32*)&(x))&0xffffff", "(*(uint32_ua*)&(x))&0xffffff"),
+                           ("#define WORD(x) (*(uint16*)&(x))", "#define WORD(x) (*(uint16_ua*)&(x))"),
+                           ("#define DWORD(x) (*(uint32*)&(x))", "#define DWORD(x) (*(uint32_ua*)&(x))")]:
+                  assert a in s, a
+                  s = s.replace(a, b)
+              wr("src/types.h", s)
+
+          pat = re.compile(r"\((u?int(?:16|32|64))\s*\*\)")
+          decl = re.compile(r"\b(const\s+)?(u?int(?:16|32|64))\s*\*\s*(\w+)\s*=\s*\((u?int(?:16|32|64)_ua)\*\)")
+          skip = ("types.h", "ppu.c")          # ppu.c only touches aligned buffers (and is hot)
+          changed = 0
+          for f in glob.glob("src/*.c") + glob.glob("src/*.h") + glob.glob("snes/*.c") + glob.glob("snes/*.h"):
+              if os.path.basename(f) in skip or f in EXCLUDE:
+                  continue
+              s = rd(f)
+              t = pat.sub(lambda m: "(%s_ua*)" % m.group(1), s)
+              t = decl.sub(lambda m: "%s%s_ua *%s = (%s*)" % (m.group(1) or "", m.group(2), m.group(3), m.group(4)), t)
+              if t != s:
+                  wr(f, t); changed += 1
+          print("alignment patch: %d files" % changed)
+
+          # ---------------------------------------------------------------- ini
+          ini = rd("zelda3.ini")
+          for key, val in [("EnhancedMode7", "0"), ("NoSpriteLimits", "0"), ("AudioFreq", "32000"),
+                           ("AudioChannels", "2"), ("NewRenderer", "1"), ("EnableAudio", "1"),
+                           ("EnableMSU", "false"), ("Autosave", "0"), ("DisplayPerfInTitle", "0")]:
+              ini = re.sub(r"(?m)^(%s\s*=\s*)[^\r\n]*" % key, lambda m: m.group(1) + val, ini, count=1)
+          os.makedirs("symbian", exist_ok=True)
+          wr("symbian/zelda3.ini", ini)
+
+          # ---------------------------------------------------------------- mmp
+          srcs = [f.replace("\\", "/") for f in sorted(glob.glob("src/*.c") + glob.glob("snes/*.c"))
+                  if f.replace("\\", "/") not in EXCLUDE]
+          names = [os.path.basename(f) for f in srcs] + ["z3_platform.c", "opus_stub.c"]
+          dup = sorted(set(n for n in names if names.count(n) > 1))
+          assert not dup, "duplicate object names: %s" % dup
+
+          lines = []
+          for d in ("src", "snes"):
+              lines.append("SOURCEPATH      ../../../%s" % d)
+              lines += ["SOURCE          %s" % os.path.basename(f) for f in srcs if f.startswith(d + "/")]
+              lines.append("")
+          tmpl = open("symbian/app/group/zelda3.mmp.in").read()
+          open("symbian/app/group/zelda3.mmp", "w").write(tmpl.replace("@CORE_SOURCES@", "\n".join(lines)))
+          print("mmp: %d C sources" % len(srcs))
+          Z3_EOF
+          BPS=$(find . -name zelda3_assets.bps -not -path "./symbian/*" | head -1)
+          test -n "$BPS" || { echo "zelda3_assets.bps not found in repo"; exit 1; }
+          cp "$BPS" symbian/app/sis/zelda3_assets.bps
+          python3 symbian/tools/patch_symbian.py
+          cp symbian/zelda3.ini symbian/app/sis/zelda3.ini
+      - uses: actions/upload-artifact@v4
+        with:
+          name: port-src
+          path: |
+            src
+            snes
+            third_party
+            symbian
+
+  host-check:
+    name: Core build check (host)
+    needs: sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: port-src
+          path: .
+      - name: Compile and link the core without SDL
+        run: |
+          mkdir obj
+          FL="-std=gnu11 -O1 -fno-strict-aliasing -fwrapv -w -DNDEBUG -DZ3_SYMBIAN -I. -Isymbian/core -Isymbian/compat"
+          for f in src/*.c snes/*.c symbian/core/*.c symbian/tools/host_check.c; do
+            case $f in src/main.c|src/opengl.c|src/glsl_shader.c) continue;; esac
+            gcc $FL -c $f -o obj/$(basename $f .c).o
+          done
+          gcc obj/*.o -o host_check -lm
+          mkdir empty && ./host_check "$PWD/empty" 2>&1 | tail -2 || true
+
+  build-sis:
+    name: Build zelda3.sisx
+    needs: sources
+    runs-on: ${{ vars.MACOS_RUNNER || macos-latest }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: port-src
+          path: .
+      - name: Check out symbian3-toolchain
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TOOLCHAIN_REPO }}
+          ref: ${{ env.TOOLCHAIN_REF }}
+          path: toolchain
+      - name: Create case-sensitive APFS volume
+        run: |
+          hdiutil create -size 24g -fs "Case-sensitive APFS" -volname Symbian -type SPARSE "$RUNNER_TEMP/symbian"
+          hdiutil attach "$RUNNER_TEMP/symbian.sparseimage" -mountpoint "$SYMBIAN_VOL"
+          sudo chown "$(id -u):$(id -g)" "$SYMBIAN_VOL"
+      - name: Install Homebrew dependencies and Rosetta
+        run: |
+          brew install perl openssl@3 unshield make gmp mpfr libmpc isl gnu-sed
+          brew unlink perl
+          sudo softwareupdate --install-rosetta --agree-to-license || true
+      - name: Restore toolchain cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /Volumes/Symbian/toolchain
+            /Volumes/Symbian/sdks
+            /Volumes/Symbian/gnupoc
+          key: symbian3-toolchain-${{ env.TOOLCHAIN_REF }}-${{ env.GNUPOC_COMMIT }}-${{ env.GCC4SYMBIAN_COMMIT }}
+      - name: Build toolchain and install SDK (cache miss)
+        if: steps.cache.outputs.cache-hit != true
+        env:
+          JOBS: 4
+        run: |
+          set -eo pipefail
+          cd toolchain
+          source Scripts/env.sh
+          mkdir -p "$N8_SRC"
+          git clone https://github.com/mstorsjo/gnupoc-package "$N8_SRC/gnupoc-package"
+          git -C "$N8_SRC/gnupoc-package" checkout "$GNUPOC_COMMIT"
+          git clone https://github.com/fedor4ever/GCC4Symbian "$N8_SRC/GCC4Symbian"
+          git -C "$N8_SRC/GCC4Symbian" checkout "$GCC4SYMBIAN_COMMIT"
+          Scripts/fetch-sdk.sh
+          Scripts/build-host-tools.sh
+          Scripts/build-gcc.sh
+          Scripts/install-sdk.sh
+      - name: Save toolchain cache
+        if: steps.cache.outputs.cache-hit != true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /Volumes/Symbian/toolchain
+            /Volumes/Symbian/sdks
+            /Volumes/Symbian/gnupoc
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: Check Open C (libc) in the SDK
+        run: |
+          source toolchain/Scripts/env.sh
+          ls "${EPOCROOT}epoc32/include/stdapis/stdio.h" "${EPOCROOT}epoc32/include/stdapis/stdint.h" || true
+          ls "${EPOCROOT}epoc32/release/armv5/lib/" | grep -i "^lib[cm]\\." || true
+          arm-none-symbianelf-gcc -print-file-name=include
+      - name: Build zelda3
+        run: |
+          set -eo pipefail
+          source toolchain/Scripts/env.sh
+          GCCINC="$(arm-none-symbianelf-gcc -print-file-name=include)"
+          cd symbian/app/group
+          sed -i.bak "s|@GCCINC@|$GCCINC|" zelda3.mmp
+          bldmake bldfiles
+          if ! abld build -keepgoing gcce urel; then
+            echo "::warning::build failed, retrying without multi-touch (Z3_MULTITOUCH)"
+            sed -i.bak2 "/Z3_MULTITOUCH/d" zelda3.mmp
+            abld reallyclean gcce urel || true
+            bldmake bldfiles
+            abld build gcce urel
+          fi
+          test -f "${EPOCROOT}epoc32/release/gcce/urel/zelda3.exe"
+      - name: Package signed SIS
+        run: |
+          set -eo pipefail
+          source toolchain/Scripts/env.sh
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          "$N8_REPO/Scripts/package-sis.sh" symbian/app/sis/zelda3.pkg "$GITHUB_WORKSPACE/dist"
+          ls -l "$GITHUB_WORKSPACE/dist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zelda3-symbian3
+          path: dist/zelda3.sisx
+      - name: Attach to release
+        if: startsWith(github.ref, refs/tags/v)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/zelda3.sisx
